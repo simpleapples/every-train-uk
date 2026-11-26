@@ -35,10 +35,11 @@
 - 🚄 **这是什么车。** 车型和名字（Class 390 Pendolino、Class 800 Azuma）、最高速度、有没有一等座、餐饮和卧铺，都从时刻表里读出来。
 - 👥 **地铁有多挤。** 地铁、Overground、DLR 和 Elizabeth line 的列车会显示车型，以及这个区间在这个时段通常有多满，来自 TfL 的 NUMBAT 模型（TfL 没有公开实时的列车载客数据）。
 - 🚦 **内置线路状态。** TfL 的停运和延误会标在对应线路上，地图上某条线没车时能看到原因（比如 "Piccadilly：计划停运"）。
-- 🔎 **搜索和筛选。** 按车次号、线路、运营公司或目的地找车，也可以像乘客那样按车站和时间找（"Paddington 14:00"）。网络、线路、运营公司可以任意组合显示，比如"只看 Central line 和 LNER"。
+- 🔎 **搜索和筛选。** 按车次号、线路、运营公司或目的地找车，也可以像乘客那样按车站和时间找（"Paddington 14:00"，查的是正在运行的列车）。在 Layers 菜单里，网络、线路、运营公司可以任意组合显示，比如"只看 Central line 和 LNER"。
+- 📍 **附近的列车。** 共享位置后，列出离你最近的列车、开往哪里、多久到下一站。（浏览器只对 https:// 网站提供位置。）
 - ⚡ **快而轻。** 一条 Server-Sent Events 推送流，每秒推增量；全程 gzip；轨道几何批量取。服务器重启后列车还在。
 - 📦 **零运行时依赖。** Node 直接运行 TypeScript 源码。`docker compose up` 就能上线。
-- 📱 **手机可用**，底部抽屉式面板，拖动地图时自动收起。
+- 📱 **为手机设计。** 搜索在顶部；底部面板先露出最关键的信息，上滑看全部；几列车挤在一起时，点一下会问你要哪一列。
 - 🌙 **浅色和深色**，跟随系统设置，地图也一起切换。
 
 ## 📸 截图
@@ -49,8 +50,8 @@
     <td width="50%"><img src="docs/screenshots/london.jpg" alt="伦敦市中心的地铁、Overground、Elizabeth line、DLR 和国铁列车"><br><sub><b>伦敦</b>：地铁按线路颜色，国铁按准点，放大后显示车次号。</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/lines.jpg" alt="Lines 面板：每家运营公司和每条 TfL 线一个小标，下面是今天的停运和延误"><br><sub><b>选择线路和运营公司</b>，查看今天的停运和延误。</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/mobile.jpg" alt="手机上的一列 GWR 列车：地图上显示速度和下一站，下方面板列出停靠站" width="56%"><br><sub><b>手机上。</b>拖动地图时面板自动收起。</sub></td>
+    <td width="50%"><img src="docs/screenshots/lines.jpg" alt="Layers 菜单：网络、运营公司和 TfL 线路，以及各自在地图上的列车数"><br><sub><b>Layers</b>：选择网络、运营公司和线路，查看今天的停运和延误。</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/mobile.jpg" alt="手机上的一列车：地图上画出路线，下方面板显示下一站、时间和速度" width="56%"><br><sub><b>手机上。</b>面板先露出关键信息，上滑看全部停靠站。</sub></td>
   </tr>
   <tr>
     <td colspan="2"><img src="docs/screenshots/dark.jpg" alt="深色地图上的全英国列车"><br><sub><b>深色模式</b>，跟随系统设置。</sub></td>

@@ -27,10 +27,14 @@
   --warn: #e8a317;
   --danger: #d9412b;
   --on-warn: #3b2a00;
+  --ok-text: #067647;
   --warn-text: #b54708;
   --danger-text: #b42318;
+  --ok-soft: #dcfae6;
   --warn-soft: #fff4d6;
   --danger-soft: #fde4e1;
+  /* You are here */
+  --me: #2f6fed;
   /* Overlays */
   --overlay: rgba(16, 24, 40, 0.94);
   --overlay-text: #ffffff;
@@ -51,9 +55,15 @@
   --r-lg: 12px;
   --r-full: 999px;
   /* Sizes that touch screens enlarge */
-  --chip-h: 28px;
+  --bar-h: 44px;
+  --row-h: 32px;
   --icon-btn: 32px;
-  --badge-h: 18px;
+  --btn-h: 32px;
+  /* Where things sit */
+  --edge: 12px;
+  --side-w: 340px;
+  /* Height of the phone sheet showing above the bottom edge (set by app.js). */
+  --sheet-visible: 0px;
 
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: var(--text);
@@ -79,10 +89,13 @@
     --accent-border: rgba(112, 144, 255, 0.4);
     --on-accent: #0c111d;
     --focus-ring: rgba(112, 144, 255, 0.28);
+    --ok-text: #47cd89;
     --warn-text: #fdb022;
     --danger-text: #f97066;
+    --ok-soft: rgba(26, 158, 111, 0.18);
     --warn-soft: rgba(232, 163, 23, 0.16);
     --danger-soft: rgba(217, 65, 43, 0.2);
+    --me: #5b8cff;
     --overlay: rgba(31, 37, 51, 0.97);
     --overlay-text-2: #98a2b3;
     --shadow-pop: 0 2px 12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.07);
@@ -92,9 +105,9 @@
 
 @media (pointer: coarse) {
   :root {
-    --chip-h: 34px;
+    --row-h: 44px;
     --icon-btn: 40px;
-    --badge-h: 26px;
+    --btn-h: 40px;
   }
 }
 
@@ -103,178 +116,21 @@
 * { box-sizing: border-box; }
 /* Elements styled with display: flex/grid would otherwise ignore `hidden`. */
 [hidden] { display: none !important; }
-html, body { margin: 0; height: 100%; background: var(--page); overflow: hidden; }
+/* No pull-to-refresh or rubber-banding: every swipe belongs to the map or the sheet. */
+html, body { margin: 0; height: 100%; background: var(--page); overflow: hidden; overscroll-behavior: none; }
 #map { position: fixed; inset: 0; }
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
 
-/* ---- Panel ---- */
-
-.panel {
-  position: fixed;
-  top: 12px;
-  left: 12px;
-  width: 352px;
-  max-height: calc(100% - 24px);
-  display: flex;
-  flex-direction: column;
-  background: var(--bg);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-panel);
-  font-size: var(--fs-base);
-  overflow: hidden;
-}
-.sheet-handle { display: none; }
-.panel-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
-.panel-body { padding: 0 16px 16px; overflow-y: auto; overscroll-behavior: contain; flex: 1; min-height: 0; }
-
-h1 { display: flex; align-items: center; gap: 8px; font-size: var(--fs-lg); font-weight: 700; margin: 0; letter-spacing: -0.01em; white-space: nowrap; }
-h1 .logo { flex: none; border-radius: var(--r-sm); }
-.notices { display: inline-flex; gap: 4px; min-width: 0; }
-.tag {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: var(--r-full);
-  white-space: nowrap;
-  cursor: default;
-}
-.tag.demo { background: var(--warn-soft); color: var(--warn-text); }
-.tag.down { background: var(--danger-soft); color: var(--danger-text); }
-.status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-3); white-space: nowrap; cursor: default; }
-.clock { font-variant-numeric: tabular-nums; }
-.conn-text { color: var(--danger-text); font-weight: 600; }
-.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--track-done); flex: none; }
-.conn-dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
-.conn-dot.bad { background: var(--danger); }
-
-/* ---- Search ---- */
-
-.search { position: relative; }
-.search-icon { position: absolute; left: 12px; top: 20px; width: 16px; height: 16px; transform: translateY(-50%); fill: var(--text-3); pointer-events: none; }
-.search input {
-  width: 100%;
-  height: 40px;
-  font: inherit;
-  padding: 0 12px 0 36px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  color: var(--text);
-}
-.search input::placeholder { color: var(--text-4); }
-.search input:focus { outline: none; border-color: var(--accent); background: var(--bg); box-shadow: 0 0 0 3px var(--focus-ring); }
-/* Results sit in the panel (a floating list would be clipped by its scroll
-   area); while they show, the rest of the panel steps aside. */
-.results { margin: 8px 0 0; padding: 0; list-style: none; }
-.browse.searching > :not(.search) { display: none; }
-.result { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 6px 8px; border-radius: var(--r-md); cursor: pointer; }
-.result[aria-selected="true"], .result:hover { background: var(--accent-soft); }
-.result.empty { color: var(--text-3); cursor: default; background: none; }
-.r-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
-.r-title { display: flex; align-items: center; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.r-sub { font-size: var(--fs-sm); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.r-badge { font-size: var(--fs-sm); font-weight: 600; color: var(--warn-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
-
-/* ---- Network and line filter ---- */
-
-.filters { margin-top: 12px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip, .lines-toggle {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--chip-h);
-  padding: 0 12px;
-  border-radius: var(--r-full);
-  border: 1px solid var(--border);
-  background: var(--bg);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-3);
-  cursor: pointer;
-  white-space: nowrap;
-  flex: none;
-}
-.chip:hover, .lines-toggle:hover { border-color: var(--border-strong); }
-.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-border); color: var(--text); }
-.chip[aria-pressed="false"] .net-dot { opacity: 0.35; }
-.net-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.net-count { font-weight: 500; font-size: var(--fs-xs); color: var(--text-3); font-variant-numeric: tabular-nums; }
-.lines-toggle { color: var(--text); padding: 0 12px 0 10px; }
-.lines-toggle svg { width: 16px; height: 16px; }
-.lines-toggle[aria-expanded="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
-
-.filters-bar { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
-.filters-bar .spacer { flex: 1; }
-.link-btn { border: 0; background: none; padding: 4px 0; font-size: var(--fs-sm); font-weight: 600; color: var(--accent); cursor: pointer; }
-.net-rows { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: start; }
-.net-rows .chip { justify-self: stretch; }
-/* TfL's networks, under the TfL chip. */
-.net-rows .chip.sub { margin-left: 16px; }
-.net-lines { display: flex; flex-wrap: wrap; gap: 4px; padding-top: calc((var(--chip-h) - var(--badge-h)) / 2); }
-.lf-btn { position: relative; border: 0; padding: 0; background: none; cursor: pointer; border-radius: var(--r-xs); }
-.lf-btn .lb { height: var(--badge-h); }
-.lf-btn[aria-pressed="false"] .lb { opacity: 0.25; filter: grayscale(1); }
-.lf-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Disruption marker on a line badge or a network chip. */
-.flag { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); border: 1.5px solid var(--bg); }
-.flag.closed { background: var(--danger); }
-/* Inside the chip: the phone chip row clips anything outside it. */
-.chip .flag { top: 3px; right: 3px; width: 7px; height: 7px; border-width: 1px; }
-
-.disruptions { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
-.disruption summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 28px;
-  list-style: none;
-  cursor: pointer;
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--warn-text);
-}
-.disruption.closed summary { color: var(--danger-text); }
-.disruption summary::-webkit-details-marker { display: none; }
-/* Chevron: there is more to read. */
-.disruption summary::after {
-  content: "";
-  width: 6px;
-  height: 6px;
-  margin-left: 2px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg) translateY(-2px);
-  opacity: 0.6;
-}
-.disruption[open] summary::after { transform: rotate(225deg) translateY(-1px); }
-.disruption p { margin: 2px 0 8px; font-size: var(--fs-sm); line-height: 1.45; color: var(--text-3); }
-
-/* How many trains are showing, and the colour key with counts. */
-.legend { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
-.legend:empty { display: none; }
-.lg { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
-.lg b { display: flex; align-items: center; gap: 6px; font-size: var(--fs-lg); font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
-.lg-loading { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-3); min-height: 38px; }
-.lg-loading::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.note { margin: 0; color: var(--text-3); font-size: var(--fs-sm); line-height: 1.45; }
-
-/* ---- Selected train ---- */
-
-.detail-head { display: flex; align-items: center; gap: 8px; }
-.detail-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-.detail-actions { display: flex; gap: 2px; margin-right: -6px; }
 .icon-btn {
   display: inline-grid;
   place-items: center;
+  flex: none;
   width: var(--icon-btn);
   height: var(--icon-btn);
   border: 0;
@@ -284,36 +140,403 @@ h1 .logo { flex: none; border-radius: var(--r-sm); }
   cursor: pointer;
 }
 .icon-btn:hover { background: var(--surface); color: var(--text); }
-.icon-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 .icon-btn svg { width: 18px; height: 18px; }
+.icon-btn.sm { width: 28px; height: 28px; }
+.icon-btn.sm svg { width: 16px; height: 16px; }
 
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--btn-h);
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.btn:hover { background: var(--surface); }
+.btn svg { width: 16px; height: 16px; flex: none; }
+.btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+.link-btn { border: 0; background: none; padding: 4px 0; font-size: var(--fs-sm); font-weight: 600; color: var(--accent); cursor: pointer; }
+
+/* Floating surfaces: the search list, the Layers menu, the "trains here" chooser. */
+.pop { background: var(--bg); border-radius: var(--r-lg); box-shadow: var(--shadow-panel); }
+
+/* ---- Search ---- */
+
+.topbar { position: fixed; top: var(--edge); left: var(--edge); width: var(--side-w); z-index: 8; }
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--bar-h);
+  padding: 0 8px 0 9px;
+  background: var(--bg);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+}
+.search:focus-within { box-shadow: var(--shadow-panel), 0 0 0 2px var(--accent); }
+.search .logo { flex: none; border-radius: var(--r-sm); }
+.search-icon { width: 16px; height: 16px; flex: none; fill: var(--text-3); }
+.search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  /* 16px keeps iOS from zooming in on focus. */
+  font-size: 16px;
+  color: var(--text);
+  outline: none;
+}
+.search input::placeholder { color: var(--text-4); }
+.search input::-webkit-search-cancel-button { display: none; }
+.kbd { flex: none; font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 3px 6px; border: 1px solid var(--border-strong); border-radius: var(--r-xs); color: var(--text-3); }
+.search:focus-within .kbd, .search.has-text .kbd { display: none; }
+@media (pointer: coarse) { .kbd { display: none; } }
+
+.search-pop { margin-top: 8px; padding: 6px; max-height: calc(100dvh - var(--bar-h) - 2 * var(--edge) - 16px); overflow-y: auto; overscroll-behavior: contain; }
+.results { margin: 0; padding: 0; list-style: none; }
+.result {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 48px;
+  padding: 6px 8px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.result[aria-selected="true"], .result:hover { background: var(--accent-soft); }
+.result.empty { display: block; min-height: 0; padding: 10px; color: var(--text-3); font-size: var(--fs-md); line-height: 1.45; cursor: default; background: none; }
+.r-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.r-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-sub { font-size: var(--fs-sm); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-badge { font-size: var(--fs-sm); font-weight: 600; color: var(--warn-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hint-h { padding: 8px 8px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); }
+.hint-h:not(:first-child) { margin-top: 4px; border-top: 1px solid var(--border); padding-top: 10px; }
+.hint .r-ic { display: grid; place-items: center; width: 44px; color: var(--text-3); }
+.hint .r-ic svg { width: 18px; height: 18px; }
+.hint .r-title { font-weight: 500; }
+
+/* ---- Round buttons on the map: Layers ---- */
+
+.fab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--bar-h);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-panel);
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: 600;
+  cursor: pointer;
+}
+.fab:hover { background: var(--surface); }
+.fab svg { width: 18px; height: 18px; flex: none; }
+.fab[aria-expanded="true"] { background: var(--text); color: var(--bg); }
+.layers-btn { position: fixed; top: var(--edge); right: var(--edge); z-index: 8; }
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-full);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.count.closed { background: var(--danger-soft); color: var(--danger-text); }
+
+/* ---- Layers menu ---- */
+
+.layers {
+  position: fixed;
+  top: calc(var(--edge) + var(--bar-h) + 8px);
+  right: var(--edge);
+  z-index: 9;
+  width: 330px;
+  max-height: calc(100dvh - var(--bar-h) - 2 * var(--edge) - 8px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 0;
+  font-size: var(--fs-md);
+}
+.lsec { padding: 6px 10px 8px; }
+.lsec + .lsec { border-top: 1px solid var(--border); }
+.lsec-h { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); }
+.lsec-h .link-btn { margin-left: auto; font-size: var(--fs-xs); }
+/* Every row: checkbox, a fixed-width icon or badge, name, count. */
+.lrow {
+  display: grid;
+  grid-template-columns: 18px 44px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  width: 100%;
+  min-height: var(--row-h);
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  text-align: left;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.lrow:hover { background: var(--surface); }
+.lrow.sub { padding-left: 34px; grid-template-columns: 18px 26px minmax(0, 1fr) auto; }
+.lrow.plain { grid-template-columns: 18px minmax(0, 1fr) auto; }
+.check {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg);
+}
+.check::after { content: ""; }
+.lrow[aria-checked="true"] .check { background: var(--accent); border-color: var(--accent); }
+.lrow[aria-checked="true"] .check::after { width: 9px; height: 5px; margin-top: -2px; border-left: 2px solid var(--on-accent); border-bottom: 2px solid var(--on-accent); transform: rotate(-45deg); }
+.lrow[aria-checked="mixed"] .check { background: var(--accent); border-color: var(--accent); }
+.lrow[aria-checked="mixed"] .check::after { width: 8px; height: 2px; background: var(--on-accent); border-radius: 1px; }
+.lic { display: flex; justify-content: center; align-items: center; color: var(--text-2); }
+.lic svg { width: 18px; height: 18px; }
+.lic.rail { color: var(--ok); }
+.lname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.lrow[aria-checked="false"] .lname { color: var(--text-3); }
+.lcount { font-size: var(--fs-sm); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.flag { display: inline-block; width: 7px; height: 7px; margin-left: 4px; vertical-align: 1px; border-radius: 50%; background: var(--warn); }
+.flag.closed { background: var(--danger); }
+.lrow[aria-checked="false"] :is(.lic, .lb) { opacity: 0.45; filter: grayscale(0.6); }
+/* TfL: its four networks' colours in a square. */
+.tfl-mark { display: grid; grid-template-columns: 7px 7px; gap: 2px; }
+.tfl-mark i { width: 7px; height: 7px; border-radius: 2px; }
+.swatch { width: 18px; height: 4px; border-radius: 2px; }
+.seg { display: inline-flex; margin-left: auto; padding: 2px; border-radius: var(--r-md); background: var(--surface); }
+.seg button { border: 0; background: none; padding: 3px 10px; border-radius: var(--r-sm); font-size: var(--fs-sm); font-weight: 600; color: var(--text-3); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--bg); color: var(--text); box-shadow: var(--shadow-pop); }
+.lrow.unit { cursor: default; }
+.lrow.unit:hover { background: none; }
+
+.disruption summary {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 12px;
+  align-items: center;
+  column-gap: 10px;
+  min-height: var(--row-h);
+  padding: 0 6px;
+  border-radius: var(--r-md);
+  list-style: none;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--warn-text);
+}
+.disruption summary:hover { background: var(--surface); }
+.disruption.closed summary { color: var(--danger-text); }
+.disruption summary::-webkit-details-marker { display: none; }
+.disruption summary > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Chevron: there is more to read. */
+.disruption summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: 0.6;
+}
+.disruption[open] summary::after { transform: rotate(45deg) translateY(-2px); }
+.disruption p { margin: 2px 6px 8px 60px; font-size: var(--fs-sm); line-height: 1.45; color: var(--text-3); }
+/* Inside the train card the disruption has no badge column. */
+.d-note .disruption summary { grid-template-columns: minmax(0, 1fr) 12px; padding: 0; }
+.d-note .disruption p { margin-left: 0; }
+
+/* ---- Live status and colour key, bottom left ---- */
+
+.key {
+  position: fixed;
+  left: var(--edge);
+  bottom: var(--edge);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 34px;
+  padding: 0 14px;
+  background: var(--bg);
+  border-radius: var(--r-full);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.key:empty { display: none; }
+.k-live, .kc { display: inline-flex; align-items: center; gap: 6px; cursor: default; }
+.k-live { color: var(--text-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.k-live.bad { color: var(--danger-text); }
+.kc b { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
+.k-sep { width: 1px; height: 14px; background: var(--border-strong); }
+.k-loading { display: inline-flex; align-items: center; gap: 8px; }
+.k-loading::before { content: ""; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--track-done); flex: none; }
+.conn-dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+.conn-dot.bad { background: var(--danger); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.tag { font-size: var(--fs-xs); font-weight: 600; padding: 2px 8px; border-radius: var(--r-full); white-space: nowrap; cursor: default; }
+.tag.demo { background: var(--warn-soft); color: var(--warn-text); }
+.tag.down { background: var(--danger-soft); color: var(--danger-text); }
+
+/* ---- Selected train, or trains near you: a card under the search ---- */
+
+.sheet {
+  position: fixed;
+  top: calc(var(--edge) + var(--bar-h) + 8px);
+  left: var(--edge);
+  z-index: 6;
+  width: var(--side-w);
+  max-height: calc(100% - var(--bar-h) - 2 * var(--edge) - 8px - 46px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+  font-size: var(--fs-base);
+}
+.sheet-grip { display: none; }
+.sheet-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px 16px; }
+
+.d-head { display: flex; align-items: center; gap: 8px; }
+.d-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.d-head .icon-btn { margin-right: -8px; }
 .hc { font-size: var(--fs-xl); font-weight: 700; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.badge { font-size: var(--fs-sm); font-weight: 600; padding: 2px 8px; border-radius: var(--r-full); color: #fff; white-space: nowrap; }
-.badge.ontime { background: var(--ok); }
-.badge.minor { background: var(--warn); color: var(--on-warn); }
-.badge.major { background: var(--danger); }
-.d-route { margin-top: 8px; font-weight: 650; font-size: var(--fs-lg); line-height: 1.3; }
-.d-route:empty, .d-meta:empty, .d-note:empty { display: none; }
-.d-meta { margin-top: 2px; color: var(--text-3); font-size: var(--fs-sm); }
-
-/* Train type: side view, class, top speed and facility icons. */
-.stock { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 8px 12px; background: var(--surface); border-radius: var(--r-md); }
-.stock:empty { display: none; }
-.stock-art { width: 100px; height: 23px; flex: none; }
-.stock-text { min-width: 0; }
-.stock-name { font-weight: 650; font-size: var(--fs-md); line-height: 1.3; }
-.stock-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 2px; color: var(--text-3); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
-.stock-sub:empty { display: none; }
+.pill { flex: none; font-size: var(--fs-sm); font-weight: 600; padding: 2px 8px; border-radius: var(--r-full); white-space: nowrap; }
+.pill.ontime { background: var(--ok-soft); color: var(--ok-text); }
+.pill.minor { background: var(--warn-soft); color: var(--warn-text); }
+.pill.major { background: var(--danger-soft); color: var(--danger-text); }
+/* One line; scrolls sideways when it does not fit, fading out at the edge. */
+.d-route {
+  margin-top: 8px;
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+.d-route::-webkit-scrollbar { display: none; }
+.d-route.overflow:not(.at-end) { mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent); }
+.d-route:empty, .d-meta:empty, .d-next:empty, .d-extra:empty, .d-note:empty { display: none; }
+.d-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; font-size: var(--fs-sm); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.mini-art { width: 54px; height: 13px; flex: none; margin-right: 2px; }
+.m-sep { color: var(--text-4); }
+.m-fac { display: inline-flex; align-items: center; gap: 6px; margin-left: 2px; }
 .fac { display: inline-flex; color: var(--text-2); cursor: default; }
-.fac svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-.fac-first { font-size: var(--fs-xs); font-weight: 700; line-height: 1; padding: 2px 4px; border: 1.3px solid var(--text-2); border-radius: var(--r-xs); color: var(--text-2); cursor: default; }
+.fac svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.fac-first { font-size: 10px; font-weight: 700; line-height: 1; padding: 2px 3px; border: 1.2px solid var(--text-3); border-radius: 3px; color: var(--text-2); cursor: default; }
+.d-next { margin-top: 8px; font-size: var(--fs-md); color: var(--text); line-height: 1.4; }
+.d-next b { font-weight: 650; }
+.d-next .mut { color: var(--text-3); }
+.soon { color: var(--accent); font-weight: 650; }
+.late { color: var(--warn-text); }
+.d-actions { display: flex; gap: 8px; margin-top: 12px; }
+.d-extra { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; font-size: var(--fs-sm); color: var(--text-3); }
+.d-note { margin-top: 8px; }
+.note { margin: 0; color: var(--text-3); font-size: var(--fs-sm); line-height: 1.45; }
+.co-load { display: inline-flex; align-items: center; gap: 6px; cursor: default; }
+.meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
+.meter s { width: 3px; border-radius: 1px; background: var(--border-strong); }
 
-/* Beside the selected train on the map: speed, then the next stop. */
+/* Stops: a rail with a dot per stop; the train sits on the rail, not as a stop. */
+.calls { list-style: none; margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--border); }
+.call {
+  display: grid;
+  grid-template-columns: 44px 20px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 28px;
+  font-variant-numeric: tabular-nums;
+  position: relative;
+}
+.call::before { content: ""; position: absolute; left: 53px; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.call.first::before { top: 50%; }
+.call.last::before { bottom: 50%; }
+.call.passed::before { background: var(--track-done); }
+.call.here::before { background: linear-gradient(var(--track-done) 50%, var(--accent) 50%); }
+.call.here.last::before { background: var(--track-done); }
+.c-time { color: var(--text-3); font-size: var(--fs-sm); white-space: nowrap; }
+.c-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); justify-self: center; position: relative; z-index: 1; }
+.call.passed .c-dot { border-color: var(--track-done); }
+.call.passed .c-name { color: var(--text-3); }
+.call.next .c-name, .call.here .c-name { font-weight: 650; }
+.c-name { padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-rt { font-size: var(--fs-sm); color: var(--text-3); padding-left: 8px; white-space: nowrap; }
+.c-rt.late { color: var(--warn-text); font-weight: 600; }
+.c-rt.soon { color: var(--accent); }
+.c-nopos { width: 13px; height: 13px; margin-left: 6px; vertical-align: -2px; fill: none; stroke: var(--text-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* The train: a small marker on the rail between the stop behind it and the next. */
+.call.now { min-height: 18px; }
+.call.now::before { background: linear-gradient(var(--track-done) 50%, var(--accent) 50%); }
+.c-train {
+  justify-self: center;
+  position: relative;
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 16px;
+  border-radius: var(--r-full);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.c-train svg { width: 12px; height: 12px; }
+.more { margin: 6px 0 0 64px; }
+
+/* Trains near you */
+.n-head { display: flex; align-items: center; gap: 8px; }
+.n-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
+.n-sub { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.n-head .icon-btn { margin-right: -8px; }
+.n-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.n-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 52px;
+  padding: 6px 4px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.n-row:hover { background: var(--surface); }
+.n-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.n-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.n-where { font-size: var(--fs-sm); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.n-dist { font-size: var(--fs-sm); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.n-empty { padding: 10px 0; color: var(--text-3); font-size: var(--fs-sm); border-top: 1px solid var(--border); }
+
+/* ---- Beside the selected train on the map ---- */
+
 .callout {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  max-width: 220px;
+  max-width: 230px;
   padding: 6px 10px;
   background: color-mix(in srgb, var(--bg) 96%, transparent);
   border-radius: var(--r-md);
@@ -327,41 +550,47 @@ h1 .logo { flex: none; border-radius: var(--r-sm); }
 .callout:empty { display: none; }
 .callout b { font-size: var(--fs-md); font-weight: 700; font-variant-numeric: tabular-nums; cursor: default; }
 .callout span { overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
-.callout i { font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-3); }
+.callout i { font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent); }
 .callout i.late { color: var(--warn-text); }
-.callout .co-load { display: flex; align-items: center; gap: 6px; cursor: default; }
-.meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
-.meter s { width: 3px; border-radius: 1px; background: var(--border-strong); }
-.d-note { margin-top: 8px; }
+/* Phones: just the headcode, so it does not cover the map. */
+.callout.tag-only { padding: 2px 7px; border-radius: var(--r-sm); }
 
-.calls { list-style: none; margin: 12px 0 0; padding: 8px 0 0; border-top: 1px solid var(--border); max-height: 340px; overflow-y: auto; position: relative; }
-.call {
+/* ---- "Several trains here": pick one ---- */
+
+.chooser { position: fixed; z-index: 9; width: 270px; max-width: calc(100% - 16px); padding: 6px; }
+.ch-head { padding: 4px 8px 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); }
+.ch-row {
   display: grid;
-  grid-template-columns: 46px 18px 1fr auto;
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
-  min-height: 28px;
-  font-variant-numeric: tabular-nums;
-  position: relative;
+  column-gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  text-align: left;
+  cursor: pointer;
 }
-/* Timeline rail through the dots */
-.call::before { content: ""; position: absolute; left: 54px; top: 0; bottom: 0; width: 2px; background: var(--accent); }
-.call:first-child::before { top: 50%; }
-.call:last-child::before { bottom: 50%; }
-.call.passed::before, .call.current::before { background: var(--track-done); }
-.c-time { color: var(--text-3); font-size: var(--fs-sm); white-space: nowrap; }
-.c-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); justify-self: center; position: relative; z-index: 1; }
-.call.passed .c-dot { border-color: var(--track-done); }
-.call.passed .c-name { color: var(--text-3); }
-.call.current .c-dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
-.call.current .c-name { font-weight: 650; }
-.c-nopos { width: 13px; height: 13px; margin-left: 6px; vertical-align: -2px; fill: none; stroke: var(--text-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-/* The train, between two stops */
-.call.now { min-height: 16px; }
-.call.now::before { background: linear-gradient(var(--track-done) 50%, var(--accent) 50%); }
-.call.now .c-dot { width: 9px; height: 9px; border: 0; background: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
-.c-name { padding-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.c-rt { font-size: var(--fs-sm); color: var(--text-3); padding-left: 8px; }
-.c-rt.late { color: var(--warn-text); font-weight: 600; }
+.ch-row:hover, .ch-row:focus-visible { background: var(--accent-soft); }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--edge) + 46px + var(--sheet-visible));
+  z-index: 10;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(420px, calc(100% - 32px));
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: var(--overlay);
+  color: var(--overlay-text);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  box-shadow: var(--shadow-pop);
+}
 
 /* ---- Line and operator badges ---- */
 
@@ -378,31 +607,39 @@ h1 .logo { flex: none; border-radius: var(--r-sm); }
   letter-spacing: 0.02em;
   line-height: 1;
   flex: none;
+  white-space: nowrap;
 }
-.lb.lg { height: 22px; min-width: 38px; font-size: var(--fs-sm); border-radius: var(--r-sm); }
+.lb.lg { height: 22px; min-width: 40px; font-size: var(--fs-sm); border-radius: var(--r-sm); }
+/* In a column: every badge the same width, so the names beside them line up. */
+.lb.fixed { width: 44px; min-width: 0; padding: 0 3px; overflow: hidden; }
 .short-text { margin-left: 8px; }
 
 /* ---- Map controls, tooltip and credits ---- */
 
 .maplibregl-ctrl-group { background: var(--bg) !important; box-shadow: var(--shadow-pop) !important; border-radius: var(--r-md) !important; }
 .maplibregl-ctrl-group button + button { border-top-color: var(--border) !important; }
-.maplibregl-ctrl-group button.rail-toggle { display: grid; place-items: center; color: var(--text-2); }
-.rail-toggle svg { width: 18px; height: 18px; }
-.rail-toggle[aria-pressed="false"] { color: var(--text-4); }
+.maplibregl-ctrl-bottom-right { transition: transform 0.25s ease; }
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl { margin: 0 var(--edge) 8px 0; }
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl:last-child { margin-bottom: var(--edge); }
+.locate-btn { display: grid !important; place-items: center; color: var(--text-2); }
+.locate-btn svg { width: 18px; height: 18px; }
+.locate-btn[aria-pressed="true"] { color: var(--me); }
+.locate-btn.pending svg { animation: pulse 1s ease-in-out infinite alternate; }
+@keyframes pulse { to { opacity: 0.3; } }
 .maplibregl-ctrl-attrib { background: color-mix(in srgb, var(--bg) 80%, transparent) !important; font-size: var(--fs-xs); }
 .maplibregl-ctrl-attrib, .maplibregl-ctrl-attrib-inner { color: var(--text-3) !important; }
 .maplibregl-ctrl-attrib a { color: var(--text-2) !important; }
 @media (prefers-color-scheme: dark) {
   .maplibregl-ctrl-icon, .maplibregl-ctrl-attrib-button { filter: invert(1) hue-rotate(180deg); }
   /* Operator and line colours are chosen for white: lift the dark ones off a dark panel. */
-  .stock-art { filter: brightness(1.8) saturate(0.85); }
-  .net-dot, .dot { box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.22); }
-  .lb { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
+  .mini-art { filter: brightness(1.8) saturate(0.85); }
+  .dot, .swatch, .tfl-mark i { box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.22); }
+  .lb, .c-train { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
 }
 
 .tooltip {
   position: fixed;
-  z-index: 10;
+  z-index: 11;
   pointer-events: none;
   background: var(--overlay);
   color: var(--overlay-text);
@@ -416,37 +653,58 @@ h1 .logo { flex: none; border-radius: var(--r-sm); }
 .tt-title { display: flex; align-items: center; font-weight: 650; margin-bottom: 2px; }
 .tooltip .tt-sub { color: var(--overlay-text-2); }
 
-/* ---- Phones: a bottom sheet that folds down to show the map ---- */
+/* ---- Layout by screen size ---- */
 
+@media (min-width: 641px) {
+  .only-narrow { display: none !important; }
+}
+
+/* Touch screens zoom with two fingers: no zoom buttons. */
+@media (pointer: coarse) {
+  .maplibregl-ctrl-group:has(.maplibregl-ctrl-zoom-in) { display: none; }
+}
+
+/* Phones: search across the top; the train or "near you" in a bottom sheet
+   that peeks, and swipes up for the rest. */
 @media (max-width: 640px) {
-  .panel {
+  :root { --edge: 8px; }
+  .topbar { top: calc(var(--edge) + env(safe-area-inset-top)); right: calc(var(--edge) * 2 + var(--bar-h)); width: auto; }
+  .search { border-radius: var(--r-full); padding: 0 6px 0 14px; }
+  .search .logo { display: none; }
+  .search-pop { position: fixed; left: var(--edge); right: var(--edge); top: calc(var(--edge) + env(safe-area-inset-top) + var(--bar-h) + 8px); margin: 0; max-height: calc(100dvh - var(--bar-h) - 3 * var(--edge) - env(safe-area-inset-top)); }
+  .layers-btn { top: calc(var(--edge) + env(safe-area-inset-top)); right: var(--edge); width: var(--bar-h); padding: 0; justify-content: center; border-radius: var(--r-full); }
+  .fab-label { display: none; }
+  .layers-btn .count { position: absolute; top: -2px; right: -2px; min-width: 18px; height: 18px; padding: 0 5px; box-shadow: 0 0 0 2px var(--bg); }
+  .layers { left: var(--edge); right: var(--edge); top: calc(var(--edge) + env(safe-area-inset-top) + var(--bar-h) + 8px); width: auto; max-height: calc(100dvh - var(--bar-h) - 3 * var(--edge) - env(safe-area-inset-top)); }
+  /* Clear of the ⓘ at the right; tags that do not fit are cut, not run under it. */
+  .key { bottom: calc(var(--edge) + env(safe-area-inset-bottom)); height: 32px; padding: 0 12px; gap: 10px; max-width: calc(100% - 2 * var(--edge) - 36px); overflow: hidden; }
+  .kl { display: none; }
+  body.sheet-open .key { display: none; }
+
+  .sheet {
     top: auto;
-    bottom: 0;
     left: 0;
-    width: 100%;
-    max-height: 62%;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: min(78dvh, calc(100dvh - var(--bar-h) - 3 * var(--edge) - env(safe-area-inset-top)));
+    max-height: none;
     border-radius: 16px 16px 0 0;
     padding-bottom: env(safe-area-inset-bottom);
-    transition: max-height 0.22s ease;
+    transform: translateY(calc(100% - var(--peek, 180px)));
+    transition: transform 0.25s ease;
   }
-  /* Folded: the header and what comes first (search, or the train's name). */
-  .panel.folded { max-height: calc(168px + env(safe-area-inset-bottom)); }
-  .panel.folded .panel-body { overflow: hidden; }
-  .panel.folded :is(.legend, .stock, .calls, .d-note, .net-rows, .disruptions) { visibility: hidden; }
-  .sheet-handle {
-    display: block;
-    flex: none;
-    width: 100%;
-    height: 20px;
-    margin-bottom: -8px;
-    border: 0;
-    background: none;
-    cursor: pointer;
-  }
-  .sheet-handle::before { content: ""; display: block; width: 36px; height: 4px; margin: 8px auto 0; border-radius: var(--r-full); background: var(--border-strong); }
-  .panel-head { padding: 8px 16px 12px; }
-  /* One scrolling row of chips. */
-  .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-right: -16px; padding-right: 16px; }
-  .chips::-webkit-scrollbar { display: none; }
-  .calls { max-height: 30vh; }
+  .sheet.full { transform: none; }
+  .sheet.dragging { transition: none; }
+  .sheet-grip { display: block; flex: none; height: 22px; cursor: grab; touch-action: none; }
+  .sheet-grip::before { content: ""; display: block; width: 36px; height: 4px; margin: 9px auto 0; border-radius: var(--r-full); background: var(--border-strong); }
+  .sheet-body { overflow: hidden; padding-top: 2px; }
+  .sheet.full .sheet-body { overflow-y: auto; }
+  /* Peeking, the whole sheet drags; swiped up, the top part drags and the rest scrolls. */
+  .sheet:not(.full), .peek { touch-action: none; }
+  .d-actions .btn { flex: 1; justify-content: center; }
+  /* Location and credits ride above the sheet. */
+  .maplibregl-ctrl-bottom-right { transform: translateY(calc(-1 * var(--sheet-visible))); }
+  body.sheet-full .maplibregl-ctrl-bottom-right { visibility: hidden; }
+  .maplibregl-ctrl-bottom-left { display: none; }
 }

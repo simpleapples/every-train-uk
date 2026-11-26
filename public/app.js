@@ -5,11 +5,17 @@ const FRAME_MS = 250;
 const RAIL_ATTRIBUTION = 'Contains information of Network Rail Infrastructure Limited licensed under the Network Rail data feeds licence. Stations: NaPTAN (OGL).';
 // Great Britain's railway, for the opening view.
 const GB_BOUNDS = [[-6.3, 50.0], [1.8, 58.6]];
+// How far the map may be dragged: well past Britain on every side, so any
+// corner of it can be moved clear of the search bar, the card or the sheet.
+const MAX_BOUNDS = [[-30, 40], [22, 68]];
 const DELAY_COLORS = { ontime: '#1a9e6f', minor: '#e8a317', major: '#d9412b' };
 // National Rail plus TfL's networks; each can be switched on and off.
 const NETWORKS = ['rail', 'tube', 'overground', 'elizabeth-line', 'dlr'];
-const NET_LABELS = { rail: 'Rail', tube: 'Tube', overground: 'Overground', 'elizabeth-line': 'Elizabeth', dlr: 'DLR' };
+const NET_LABELS = { rail: 'National Rail', tube: 'Tube', overground: 'Overground', 'elizabeth-line': 'Elizabeth line', dlr: 'DLR' };
 const NET_COLORS = { rail: '#1a9e6f', tube: '#E32017', overground: '#EE7C0E', 'elizabeth-line': '#6950A1', dlr: '#00A4A7' };
+const KMH_PER_MPH = 1.609344;
+// Rows the Layers menu shows per list before "All".
+const SHORT_LIST = 6;
 
 const trains = new Map();
 const paths = new Map(); // "line|from>to" -> { coords, cum } once loaded, null while loading or unavailable
@@ -21,21 +27,42 @@ let detail = null; // /api/train response for the selected train
 let detailStamp = null; // which train state `detail` was fetched for
 let pendingFit = false; // zoom to the selected train's route when its detail arrives
 let following = false; // keep the selected train centred
+let allStops = false; // the whole stop list, not just around the train
 let lastStatus = null;
 let streamOk = false; // false while the SSE connection to our server is down
 let haveSnapshot = false; // trains have arrived at least once
 let shown = new Set(NETWORKS);
 // Lines ("tfl:central") and operators ("rail:LNER") switched off.
 let hiddenLines = new Set();
-let linesOpen = false; // the per-line picker under the network chips
 let railLines = true; // railway lines overlay
+let speedUnit = 'kmh'; // or 'mph'
+let layersOpen = false;
+const moreRows = { ops: false, lines: false }; // Layers lists shown in full
+// The card (computer) or bottom sheet (phone): 'detail', 'nearby' or null.
+let sheetMode = null;
+let sheetFull = false; // phone sheet swiped up
+let peekPx = 0; // phone sheet height when it only peeks
+// Your position, once shared: { lon, lat, acc }.
+let me = null;
+let locating = false;
+let watchId = null;
 
 const $ = (id) => document.getElementById(id);
-const panel = $('panel');
+const sheet = $('sheet');
 const timeFmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' });
 const hhmm = (ms) => (ms ? timeFmt.format(ms) : '');
 const serverNow = () => Date.now() + clockOffset;
 const isNarrow = () => window.innerWidth <= 640;
+const coarse = matchMedia('(pointer: coarse)');
+
+const store = {
+  get(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key) ?? 'null') ?? fallback; } catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
+  },
+};
 
 // Only touch the DOM when an element's markup really changed (keeps open
 // <details>, focus and scroll positions).
@@ -55,13 +82,13 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const THEME = darkScheme.matches
   ? {
     style: 'https://tiles.openfreemap.org/styles/dark',
-    ink: '#f2f4f7', inkPassed: '#98a2b3', halo: '#161b26', casing: '#0c111d', railLine: '#5b6578',
+    ink: '#f2f4f7', inkPassed: '#98a2b3', halo: '#161b26', casing: '#0c111d', railLine: '#5b6578', me: '#5b8cff',
     // OpenRailwayMap's dark lines, lifted to grey to show on a dark map.
     rail: { 'raster-opacity': 0.22, 'raster-saturation': -1, 'raster-brightness-min': 0.3, 'raster-contrast': 0.1 }, railFocused: 0.1,
   }
   : {
     style: 'https://tiles.openfreemap.org/styles/positron',
-    ink: '#1d2330', inkPassed: '#667085', halo: '#ffffff', casing: '#ffffff', railLine: '#8d97ab',
+    ink: '#1d2330', inkPassed: '#667085', halo: '#ffffff', casing: '#ffffff', railLine: '#8d97ab', me: '#2f6fed',
     rail: { 'raster-opacity': 0.45, 'raster-saturation': -1, 'raster-contrast': 0.15 }, railFocused: 0.2,
   };
 const motion = (ms) => (reduceMotion.matches ? 0 : ms);
@@ -72,16 +99,20 @@ const map = new maplibregl.Map({
   bounds: GB_BOUNDS,
   fitBoundsOptions: { padding: mapPadding() },
   minZoom: 4,
-  maxBounds: [[-14, 48.5], [6, 61.5]],
+  maxBounds: MAX_BOUNDS,
   // Added below, with the data sources' credits.
   attributionControl: false,
 });
-map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
-/** Map padding that keeps routes and trains out from under the panel. */
+/**
+ * Map padding that keeps routes and trains clear of the search bar, the card
+ * (computer) or the sheet as it peeks (phone).
+ */
 function mapPadding() {
-  if (isNarrow()) return { top: 50, right: 20, left: 20, bottom: panel.offsetHeight + 20 };
-  return { top: 40, right: 60, bottom: 40, left: panel.offsetWidth + 40 };
+  const top = (isNarrow() ? 8 : 12) + 44 + 20;
+  if (isNarrow()) return { top, right: 20, left: 20, bottom: (sheetMode ? peekPx : 48) + 20 };
+  const left = sheetMode ? sheet.offsetLeft + sheet.offsetWidth + 40 : 40;
+  return { top, right: 70, bottom: 60, left };
 }
 
 // ---- Train helpers ----
@@ -98,7 +129,7 @@ const colorOf = (t) => t.color ?? DELAY_COLORS[category(t)];
 
 // Lines and operators are shown as colour badges with short codes: compact,
 // and no logos (the Network Rail data licence bars operator logos, and TfL's
-// roundel is a registered trade mark).
+// roundel and National Rail's double arrow are registered trade marks).
 const TFL_LINES = {
   tube: { bakerloo: 'BAK', central: 'CEN', circle: 'CIR', district: 'DIS', 'hammersmith-city': 'H&C', jubilee: 'JUB', metropolitan: 'MET', northern: 'NOR', piccadilly: 'PIC', victoria: 'VIC', 'waterloo-city': 'W&C' },
   overground: { liberty: 'LIB', lioness: 'LIO', mildmay: 'MIL', suffragette: 'SUF', weaver: 'WEA', windrush: 'WIN' },
@@ -166,8 +197,9 @@ function textOn(hex) {
   return ink;
 }
 
-function badgeHtml(b, size = '') {
-  return `<span class="lb${size ? ` ${size}` : ''}" style="background:${escapeHtml(b.color)};color:${textOn(b.color)}" data-tip="${escapeHtml(b.name)}">${escapeHtml(b.code)}</span>`;
+/** A colour badge with the full name on hover; `cls` is 'lg' (titles) or 'fixed' (columns). */
+function badgeHtml(b, cls = '') {
+  return `<span class="lb${cls ? ` ${cls}` : ''}" style="background:${escapeHtml(b.color)};color:${textOn(b.color)}" data-tip="${escapeHtml(b.name)}">${escapeHtml(b.code)}</span>`;
 }
 
 /** Whether the train's network, and its line or operator, are switched on. */
@@ -298,20 +330,62 @@ function nameOf(t) {
   return [t.headcode, t.operator].filter(Boolean).join(' · ');
 }
 
-/** Badge plus the shortest useful text: headcode (rail) and destination. */
-function shortHtml(t) {
+/** Headcode (rail) and destination, as text. */
+function shortText(t) {
   const to = t.destination ? `→ ${t.destination}` : '';
-  const text = t.mode ? to : [t.headcode, to].filter(Boolean).join(' ');
-  return `${badgeHtml(badgeOf(t))}<span class="short-text">${escapeHtml(text)}</span>`;
+  return (t.mode ? to || t.operator : [t.headcode, to].filter(Boolean).join(' ')) ?? '';
 }
 
-/** Title row: badge, then headcode and delay for rail, line name for TfL. */
+/** Badge plus the shortest useful text (map tooltip). */
+function shortHtml(t) {
+  return `${badgeHtml(badgeOf(t))}<span class="short-text">${escapeHtml(shortText(t))}</span>`;
+}
+
+/** Title row: badge, then headcode and lateness for rail, line name for TfL. */
 function titleHtml(t) {
   const badge = badgeHtml(badgeOf(t), 'lg');
   if (t.mode) return `${badge}<span class="hc">${escapeHtml(t.operator)}</span>`;
   const delay = delayLabel(t);
-  return `${badge}<span class="hc">${escapeHtml(t.headcode)}</span>${delay ? `<span class="badge ${category(t)}">${delay}</span>` : ''}`;
+  return `${badge}<span class="hc">${escapeHtml(t.headcode)}</span>${delay ? `<span class="pill ${category(t)}">${escapeHtml(delay)}</span>` : ''}`;
 }
+
+// ---- Units ----
+
+const fmtSpeed = (kmh) => (speedUnit === 'mph' ? `${Math.round(kmh / KMH_PER_MPH)} mph` : `${Math.round(kmh)} km/h`);
+const NEAR_METRES = () => (speedUnit === 'mph' ? 2 * 1609.344 : 3000);
+const NEAR_LABEL = () => (speedUnit === 'mph' ? '2 miles' : '3 km');
+function fmtDistance(m) {
+  if (speedUnit === 'mph') return m < 400 ? `${Math.round(m / 0.9144 / 10) * 10} yd` : `${(m / 1609.344).toFixed(1)} mi`;
+  return m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
+// No public feed gives real speeds (no GPS), so the figure is an average over
+// the section; the tooltip says how it was worked out.
+function speedOf(t) {
+  if (t.state !== 'moving') return null;
+  const measured = t.measuredKmh ? `Measured ${fmtSpeed(t.measuredKmh)} over ${t.measuredSection}, from actual report times.` : '';
+  const top = t.topKmh ? `Never shown above its top speed, ${fmtSpeed(t.topKmh)}.` : '';
+  if (t.speedKmh) {
+    const how = t.mode ? 'Average over this section, from TfL arrival predictions.' : 'Average over this section, from its scheduled running time.';
+    return { text: `≈ ${fmtSpeed(t.speedKmh)}`, tip: [how, measured, top].filter(Boolean).join(' ') };
+  }
+  return t.measuredKmh ? { text: fmtSpeed(t.measuredKmh), tip: [measured, top].filter(Boolean).join(' ') } : null;
+}
+
+// ---- Icons ----
+
+const svg = (body, extra = '') => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra}>${body}</svg>`;
+const ICONS = {
+  train: svg('<rect x="4.5" y="2.5" width="11" height="11.5" rx="2.5"/><path d="M4.5 8.5h11M7.5 11.25h.01M12.5 11.25h.01M7 14l-2 3.5M13 14l2 3.5"/>'),
+  pin: svg('<path d="M10 17.5s5.5-5 5.5-9.25a5.5 5.5 0 0 0-11 0C4.5 12.5 10 17.5 10 17.5z"/><circle cx="10" cy="8.25" r="2"/>'),
+  route: svg('<circle cx="5" cy="15" r="2"/><circle cx="15" cy="5" r="2"/><path d="M7 15h5.5a2.75 2.75 0 0 0 0-5.5h-5a2.75 2.75 0 0 1 0-5.5H13"/>'),
+  recent: svg('<path d="M3.5 10a6.5 6.5 0 1 0 1.9-4.6M3.5 3.5v3h3"/><path d="M10 6.5V10l2.5 1.5"/>'),
+  track: svg('<path d="M7.5 2.5 6 17.5M12.5 2.5 14 17.5M5.6 6h8.8M5.2 10h9.6M4.8 14h10.4"/>'),
+  // An arrow pointing up and right: where am I.
+  locate: svg('<path d="M16.5 3.5 3.5 9l5.5 2 2 5.5z"/>'),
+};
+const TRAIN_GLYPH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="2" width="9" height="9.5" rx="2"/><path d="M3.5 7h9M6 13.5 5 15M10 13.5l1 1.5"/></svg>';
+const TFL_MARK = `<span class="tfl-mark" aria-hidden="true">${['tube', 'overground', 'elizabeth-line', 'dlr'].map((n) => `<i style="background:${NET_COLORS[n]}"></i>`).join('')}</span>`;
 
 // ---- Train type: a side view of the kind of train, its class, and facility icons ----
 
@@ -360,21 +434,34 @@ function facilitiesHtml(features) {
   const icons = new Map(); // icon -> labels, so a buffet and a trolley share one cup
   let first = '';
   for (const f of features) {
-    if (f.id === 'first') first = '<span class="fac-first" title="First class">1st</span>';
+    if (f.id === 'first') first = '<span class="fac-first" data-tip="First class" aria-label="First class">1st</span>';
     else if (ICON_OF[f.id]) icons.set(ICON_OF[f.id], [...(icons.get(ICON_OF[f.id]) ?? []), f.label]);
   }
   return first + [...icons].map(([icon, labels]) => {
     const label = escapeHtml(labels.join(', '));
-    return `<span class="fac" role="img" aria-label="${label}" title="${label}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="${FACILITY_ICONS[icon]}"/></svg></span>`;
+    return `<span class="fac" role="img" aria-label="${label}" data-tip="${label}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="${FACILITY_ICONS[icon]}"/></svg></span>`;
   }).join('');
 }
 
-/** The train-type card: side view, class, top speed (or load) and facilities. */
-function stockHtml(t, s) {
+/** "Class 220/221 Voyager" -> "Class 220/221"; the fleet name stays in the tooltip. */
+function shortStock(stock) {
+  if (!stock.startsWith('Class ')) return stock;
+  const words = stock.slice(6).split(' ').filter((w) => /^[\d/]+$/.test(w) || w === 'or');
+  while (words.at(-1) === 'or') words.pop();
+  return words.length ? `Class ${words.join(' ')}` : stock;
+}
+
+/** One line under the route: a small side view, class, top speed, facilities. */
+function metaHtml(t, s) {
   if (!s) return '';
-  const art = s.kind ? `<svg class="stock-art" viewBox="0 0 112 26" style="color:${escapeHtml(badgeOf(t).color)}" aria-hidden="true"><g fill="currentColor">${trainArt(s, t.freight)}</g></svg>` : '';
-  const facts = [s.maxMph && `${s.maxMph} mph`, s.tonnes && `${s.tonnes.toLocaleString('en-GB')} t`].filter(Boolean).map((f) => `<span>${f}</span>`).join('');
-  return `${art}<div class="stock-text"><div class="stock-name">${escapeHtml(s.stock ?? '')}</div><div class="stock-sub">${facts}${facilitiesHtml(s.features)}</div></div>`;
+  const color = badgeOf(t).color;
+  const art = s.kind ? `<svg class="mini-art" viewBox="0 0 112 26" style="color:${escapeHtml(color)}" aria-hidden="true"><g fill="currentColor">${trainArt(s, t.freight)}</g></svg>` : '';
+  const parts = [];
+  if (s.stock) parts.push(`<span data-tip="${escapeHtml(s.stock)}">${escapeHtml(shortStock(s.stock))}</span>`);
+  if (s.maxMph) parts.push(`<span>Top speed ${fmtSpeed(s.maxMph * KMH_PER_MPH)}</span>`);
+  if (s.tonnes) parts.push(`<span>${s.tonnes.toLocaleString('en-GB')} t</span>`);
+  const facilities = facilitiesHtml(s.features);
+  return art + parts.join('<span class="m-sep">·</span>') + (facilities ? `<span class="m-fac">${facilities}</span>` : '');
 }
 
 function detailFor(t) {
@@ -391,7 +478,7 @@ function routeLabel(t) {
   return `${d.stops[0].name} → ${d.stops[d.stops.length - 1].name}`;
 }
 
-/** Where the train is, in a few words (search results and hover labels). */
+/** Where the train is, in a few words (search results, hover labels, the chooser). */
 function whereLabel(t) {
   const d = detailFor(t);
   if (t.state === 'terminated') return `Terminated at ${t.from.name}`;
@@ -399,48 +486,80 @@ function whereLabel(t) {
   return `${d?.previous?.name ?? t.from.name} – ${d?.next?.name ?? t.to.name}`;
 }
 
-/** Operator (when the badge is only a code), platform, and report age once it is old. */
-function metaLabel(t, now) {
+/** How busy the train usually is here: four bars, then the word and a head count. */
+const LOAD_COLORS = ['#1a9e6f', '#86b41f', '#f79009', '#d9412b'];
+function loadHtml(load) {
+  if (!load) return '';
+  const bars = [0, 1, 2, 3].map((i) => `<s style="height:${4 + i * 2}px${i <= load.level ? `;background:${LOAD_COLORS[load.level]}` : ''}"></s>`).join('');
+  const tip = escapeHtml(`About ${load.people} people on board. ${load.basis}.`);
+  return `<span class="co-load" data-tip="${tip}"><em class="meter">${bars}</em>${escapeHtml(load.label)} · ~${Number(load.people).toLocaleString('en-GB')} people</span>`;
+}
+
+/** Platform, how busy (TfL), and the report's age once it is old. */
+function extraHtml(t, d, now) {
   const parts = [];
-  const b = badgeOf(t);
-  if (!t.mode && b.name !== b.code) parts.push(b.name);
-  if (t.platform) parts.push(t.mode ? t.platform : `Platform ${t.platform}`);
-  if (now - t.reportedAt > 3 * 60_000) parts.push(`reported ${ago(now - t.reportedAt)}`);
-  return parts.join(' · ');
+  if (t.platform) parts.push(`<span>${escapeHtml(t.mode ? t.platform : `Platform ${t.platform}`)}</span>`);
+  if (d?.load) parts.push(loadHtml(d.load));
+  if (now - t.reportedAt > 3 * 60_000) parts.push(`<span>Reported ${ago(now - t.reportedAt)}</span>`);
+  return parts.join('');
+}
+
+function expectedOf(s, delayMin) {
+  if (s.expectedArr) return s.expectedArr;
+  const planned = s.plannedArr ?? s.plannedDep;
+  return planned ? planned + Math.max(0, delayMin) * 60_000 : undefined;
+}
+
+const minutesUntil = (ms, now) => Math.max(0, Math.round((ms - now) / 60_000));
+/** "9 min" when it is soon, the clock time when it is not. */
+const untilLabel = (ms, now) => (ms - now < 60 * 60_000 ? `${minutesUntil(ms, now)} min` : hhmm(ms));
+
+/** Phones: next stop, when, and speed, in the sheet as it peeks. */
+function nextHtml(t, d, now) {
+  if (t.state === 'terminated') return `<span class="mut">Terminated at</span> <b>${escapeHtml(t.from.name)}</b>`;
+  if (t.state === 'stopped') return `<span class="mut">At</span> <b>${escapeHtml((d?.current ?? d?.previous)?.name ?? t.from.name)}</b>`;
+  const next = d?.next?.name ?? t.to?.name;
+  if (!next) return '';
+  const exp = d?.next && expectedOf(d.next, t.delayMin);
+  const speed = speedOf(t);
+  const late = !t.mode && t.delayMin > 0;
+  return `<span class="mut">Next</span> <b>${escapeHtml(next)}</b>`
+    + (exp ? ` <span class="mut">·</span> <span class="${late ? 'late' : 'soon'}">${untilLabel(exp, now)}</span>` : '')
+    + (speed ? ` <span class="mut">· ${speed.text}</span>` : '');
 }
 
 /** A line disruption that opens to show TfL's explanation. */
 function disruptionHtml(line, s, withBadge) {
-  const badge = withBadge ? badgeHtml(tflBadge(line)) : '';
+  const badge = withBadge ? badgeHtml(tflBadge(line), 'fixed') : '';
   const reason = s.reason ? `<p>${escapeHtml(s.reason)}</p>` : '';
-  return `<details class="disruption${s.closed ? ' closed' : ''}"><summary>${badge}<span>${escapeHtml(s.summary)}</span></summary>${reason}</details>`;
+  const text = withBadge ? `${lineName(line)} · ${s.summary}` : s.summary;
+  return `<details class="disruption${s.closed ? ' closed' : ''}"><summary>${badge}<span>${escapeHtml(text)}</span></summary>${reason}</details>`;
 }
 
-// ---- Selection: route highlight and detail panel ----
+// ---- Selection: route highlight and the train card ----
 
 function select(id) {
   const t = trains.get(id);
   if (!t) return;
-  hideResults();
+  closePops();
   selectedId = id;
   detail = null;
   detailStamp = null;
+  allStops = false;
   // Zoom to the whole route once its detail arrives, even if a newer request
   // for the same train replaces the first one.
   pendingFit = true;
-  setFolded(false);
   setFollow(false);
   setRoute(null);
   $('d-calls').replaceChildren();
+  $('d-more').hidden = true;
   setHtml($('d-note'), '');
-  setHtml($('d-stock'), '');
+  setHtml($('d-meta'), '');
+  openSheet('detail');
   renderDetailHead(t);
-  $('browse').hidden = true;
-  $('detail').hidden = false;
-  panel.classList.add('has-detail');
-  panel.querySelector('.panel-body').scrollTop = 0;
   setFocusStyle();
-  loadDetail(id, { scroll: true });
+  remember(t);
+  loadDetail(id);
   render();
 }
 
@@ -451,10 +570,8 @@ function clearSelection() {
   pendingFit = false;
   setFollow(false);
   setRoute(null);
-  $('detail').hidden = true;
-  $('browse').hidden = false;
-  panel.classList.remove('has-detail');
   setFocusStyle();
+  openSheet(locating && me ? 'nearby' : null);
 }
 
 /** While a train is selected, fade everything else so its route stands out. */
@@ -462,7 +579,7 @@ function setFocusStyle() {
   if (!map.getLayer('trains')) return;
   const focused = Boolean(selectedId);
   const dim = (v) => (focused ? ['case', ['==', ['get', 'selected'], true], 1, v] : 1);
-  map.setPaintProperty('trains', 'icon-opacity', dim(0.25));
+  map.setPaintProperty('trains', 'icon-opacity', dim(0.15));
   map.setPaintProperty('train-labels', 'text-opacity', dim(0));
   map.setPaintProperty('openrailwaymap', 'raster-opacity', focused ? THEME.railFocused : THEME.rail['raster-opacity']);
 }
@@ -476,7 +593,7 @@ function setFollow(on) {
 
 const stampOf = (t) => `${t.id}|${t.from.key}|${t.state}`;
 
-async function loadDetail(id, { scroll = false } = {}) {
+async function loadDetail(id) {
   const t = trains.get(id);
   if (!t) return;
   const stamp = stampOf(t);
@@ -493,7 +610,7 @@ async function loadDetail(id, { scroll = false } = {}) {
   setClock(d.serverTime);
   detail = d;
   setRoute(d);
-  renderDetail(d, scroll);
+  renderDetail(d);
   if (pendingFit) {
     pendingFit = false;
     fitRoute();
@@ -571,54 +688,49 @@ function fitRoute() {
   const coords = [...detail.pathBehind, ...detail.pathAhead];
   if (coords.length < 2) return;
   setFollow(false);
+  if (sheetFull) setSheetFull(false);
   const bounds = coords.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(coords[0], coords[0]));
   map.fitBounds(bounds, { padding: mapPadding(), maxZoom: 12, duration: motion(800) });
 }
 
 function renderDetailHead(t) {
-  $('d-title').innerHTML = titleHtml(t);
-  $('d-route').textContent = routeLabel(t);
+  setHtml($('d-title'), titleHtml(t));
+  const route = $('d-route');
+  if (setHtml(route, escapeHtml(routeLabel(t)))) {
+    route.scrollLeft = 0;
+    route.classList.remove('at-end');
+  }
+  route.classList.toggle('overflow', route.scrollWidth > route.clientWidth + 1);
+}
+$('d-route').addEventListener('scroll', (e) => {
+  const el = e.target;
+  el.classList.toggle('at-end', el.scrollLeft + el.clientWidth >= el.scrollWidth - 2);
+}, { passive: true });
+
+/** Next stop, platform and the like: change as the train runs, so redrawn every frame. */
+function renderLive(t, now) {
+  const d = detailFor(t);
+  const changed = setHtml($('d-next'), nextHtml(t, d, now)) | setHtml($('d-extra'), extraHtml(t, d, now));
+  if (changed) updatePeek();
 }
 
-// ---- Callout: the selected train's speed and next stop, beside it on the map ----
+// ---- Callout: beside the selected train on the map ----
 
 const callout = document.createElement('div');
 callout.className = 'callout';
 let calloutMarker = null;
 
-// No public feed gives real speeds (no GPS), so the figure is an average over
-// the section; the tooltip says how it was worked out.
-function speedOf(t) {
-  if (t.state !== 'moving') return null;
-  const measured = t.measuredKmh ? `Measured ${t.measuredKmh} km/h over ${t.measuredSection}, from actual report times.` : '';
-  const top = t.topKmh ? `Never shown above its top speed, ${t.topKmh} km/h.` : '';
-  if (t.speedKmh) {
-    const how = t.mode ? 'Average over this section, from TfL arrival predictions.' : 'Average over this section, from its scheduled running time.';
-    return { text: `≈ ${t.speedKmh} km/h`, tip: [how, measured, top].filter(Boolean).join(' ') };
-  }
-  return t.measuredKmh ? { text: `${t.measuredKmh} km/h`, tip: [measured, top].filter(Boolean).join(' ') } : null;
-}
-
-const LOAD_COLORS = ['#1a9e6f', '#86b41f', '#f79009', '#d9412b'];
-
-/** How busy the train usually is here: four bars, then the word and a head count. */
-function loadHtml(load) {
-  if (!load) return '';
-  const bars = [0, 1, 2, 3].map((i) => `<s style="height:${4 + i * 2}px${i <= load.level ? `;background:${LOAD_COLORS[load.level]}` : ''}"></s>`).join('');
-  const tip = escapeHtml(`About ${load.people} people on board. ${load.basis}.`);
-  return `<span class="co-load" title="${tip}"><em class="meter">${bars}</em>${load.label} · ~${load.people.toLocaleString('en-GB')} people</span>`;
-}
-
 function calloutHtml(t, d, now) {
+  // Phones: the sheet says the rest; just name the train.
+  if (isNarrow()) return `<b>${escapeHtml(t.mode ? badgeOf(t).code : t.headcode)}</b>`;
   if (t.state === 'terminated') return `<b>Terminated</b><span>${escapeHtml(t.from.name)}</span>`;
   if (t.state === 'stopped') return `<b>Standing</b><span>${escapeHtml((d?.current ?? d?.previous)?.name ?? t.from.name)}</span>${loadHtml(d?.load)}`;
-  const tfl = Boolean(t.mode);
   const speed = speedOf(t);
   const next = d?.next?.name ?? t.to?.name;
   const exp = d?.next && expectedOf(d.next, t.delayMin);
-  const when = exp ? (tfl ? `${minutesUntil(exp, now)} min` : hhmm(exp)) : '';
-  return (speed ? `<b title="${escapeHtml(speed.tip)}">${speed.text}</b>` : '')
-    + (next ? `<span>→ ${escapeHtml(next)}${when ? ` <i${!tfl && t.delayMin > 0 ? ' class="late"' : ''}>${when}</i>` : ''}</span>` : '')
+  const when = exp ? untilLabel(exp, now) : '';
+  return (speed ? `<b data-tip="${escapeHtml(speed.tip)}">${speed.text}</b>` : '')
+    + (next ? `<span>→ ${escapeHtml(next)}${when ? ` · <i${!t.mode && t.delayMin > 0 ? ' class="late"' : ''}>${when}</i>` : ''}</span>` : '')
     + loadHtml(d?.load);
 }
 
@@ -631,46 +743,67 @@ function renderCallout(t, now) {
   const pos = positionOf(t, now);
   if (!calloutMarker) calloutMarker = new maplibregl.Marker({ element: callout, anchor: 'left', offset: [14, 0] }).setLngLat(pos).addTo(map);
   else calloutMarker.setLngLat(pos);
+  callout.classList.toggle('tag-only', isNarrow());
   setHtml(callout, calloutHtml(t, detailFor(t), now));
 }
+
+// ---- Stops ----
 
 function timeOf(s, kind) {
   if (kind === 'actual') return s.actualDep ?? s.actualArr;
   return s.plannedDep ?? s.plannedArr;
 }
 
-function expectedOf(s, delayMin) {
-  if (s.expectedArr) return s.expectedArr;
-  const planned = s.plannedArr ?? s.plannedDep;
-  return planned ? planned + Math.max(0, delayMin) * 60_000 : undefined;
-}
-
-const minutesUntil = (ms, now) => Math.max(0, Math.round((ms - now) / 60_000));
 // Beside a stop the map cannot show: its route stops short of it.
 const NO_POSITION = '<svg class="c-nopos" viewBox="0 0 16 16" data-tip="Not on the map: no published position" aria-label="Not on the map"><path d="M8 14s4.5-4.2 4.5-7.5a4.5 4.5 0 0 0-8.6-1.8M3.6 6.9C4 9.9 8 14 8 14M2.5 2.5l11 11"/></svg>';
 
-function renderDetail(d, scroll) {
+function renderDetail(d) {
   const t = trains.get(d.train.id) ?? d.train;
-  const tfl = Boolean(t.mode);
-  const now = serverNow();
   renderDetailHead(t);
-
-  setHtml($('d-stock'), stockHtml(t, d.service));
-  const status = tfl ? lineStatusOf(t.line) : null;
+  setHtml($('d-meta'), metaHtml(t, d.service));
+  const status = t.mode ? lineStatusOf(t.line) : null;
   setHtml($('d-note'), status
     ? disruptionHtml(t.line, status, false)
-    : !tfl && !d.timetabled ? '<p class="note">Only stops reported so far (no timetable feed).</p>' : '');
+    : !t.mode && !d.timetabled ? '<p class="note">Only stops reported so far (no timetable feed).</p>' : '');
+  renderCalls(d, t, serverNow());
+  renderLive(t, serverNow());
+  updatePeek();
+}
 
+/**
+ * The stops, around the train unless the whole list is open: the stop it
+ * left, then the train itself on the line, then the next three.
+ */
+function renderCalls(d, t, now) {
+  const tfl = Boolean(t.mode);
   // Only where the train stops. The places it runs through stay in d.stops:
   // they place it on the map and draw its route, but are not listed.
   const stops = d.stops.filter((s) => s.call);
-  const atListedStop = t.state !== 'moving' && stops.some((s) => s.status === 'current');
-  const nowIndex = atListedStop ? -1 : stops.findLastIndex((s) => s.status !== 'upcoming');
+  const here = t.state !== 'moving' ? stops.findIndex((s) => s.status === 'current') : -1;
+  const lastDone = stops.findLastIndex((s) => s.status !== 'upcoming');
+  const next = stops.findIndex((s) => s.status === 'upcoming');
+  // Between stops: after `lastDone`, unless it has not left the first one yet.
+  const between = here < 0 && lastDone >= 0 && lastDone < stops.length - 1 ? lastDone : -1;
+
+  let from = 0;
+  let to = stops.length;
+  // A phone sheet swiped up has room for them all.
+  const roomy = isNarrow() && sheetFull;
+  const compact = !allStops && !roomy && stops.length > 6;
+  if (compact) {
+    from = Math.max(0, (here >= 0 ? here : Math.max(lastDone, 0)) - (here >= 0 ? 1 : 0));
+    to = Math.min(stops.length, from + 5);
+    from = Math.max(0, to - 5);
+  }
+
+  const color = badgeOf(t).color;
+  const trainMark = `<span class="c-train" style="background:${escapeHtml(color)};color:${textOn(color)}">${TRAIN_GLYPH}</span>`;
   const items = [];
-  stops.forEach((s, i) => {
+  for (let i = from; i < to; i++) {
+    const s = stops[i];
     let left = '';
     let right = '';
-    let late = false;
+    let rclass = '';
     if (tfl) {
       if (s.status === 'upcoming' && s.expectedArr) left = `${minutesUntil(s.expectedArr, now)} min`;
     } else {
@@ -679,27 +812,45 @@ function renderDetail(d, scroll) {
       left = hhmm(planned);
       if (actual) {
         right = hhmm(actual);
-        late = planned ? actual - planned >= 60_000 : false;
+        if (planned && actual - planned >= 60_000) rclass = 'late';
+      } else if (i === next) {
+        const exp = expectedOf(s, t.delayMin);
+        if (exp) {
+          right = untilLabel(exp, now);
+          rclass = t.delayMin > 0 ? 'late' : 'soon';
+        }
       } else if (s.status === 'upcoming' && planned && t.delayMin > 0) {
         right = hhmm(expectedOf(s, t.delayMin));
-        late = true;
+        rclass = 'late';
       }
     }
-    items.push(`<li class="call ${s.status}">
-      <span class="c-time">${left}</span>
-      <span class="c-dot"></span>
+    const cls = [s.status, i === 0 && 'first', i === stops.length - 1 && 'last', i === here && 'here', i === next && 'next'].filter(Boolean).join(' ');
+    items.push(`<li class="call ${escapeHtml(cls)}">
+      <span class="c-time">${escapeHtml(left)}</span>
+      ${i === here ? trainMark : '<span class="c-dot"></span>'}
       <span class="c-name">${escapeHtml(s.name)}${s.lat === undefined && !tfl ? NO_POSITION : ''}</span>
-      <span class="c-rt${late ? ' late' : ''}">${escapeHtml(right)}</span>
+      <span class="c-rt ${rclass}">${escapeHtml(right)}</span>
     </li>`);
-    // The train itself, between the stop it left and the next one.
-    if (i === nowIndex && stops[i + 1]) items.push('<li class="call now" aria-label="Train is here"><span></span><span class="c-dot"></span></li>');
-  });
-  const list = $('d-calls');
-  list.innerHTML = items.join('');
-  // Scroll only the list (scrollIntoView would also scroll the panel and hide
-  // the header on phones).
-  const focus = scroll && list.querySelector('.now, .current, .upcoming');
-  if (focus) list.scrollTop = focus.offsetTop - list.clientHeight / 2 + focus.offsetHeight / 2;
+    // The train itself, on the line between the stop it left and the next one.
+    if (i === between) items.push(`<li class="call now" aria-label="The train is here"><span></span>${trainMark}<span></span><span></span></li>`);
+  }
+  $('d-calls').innerHTML = items.join('');
+  const more = $('d-more');
+  more.hidden = stops.length <= 6 || roomy;
+  more.textContent = allStops ? 'Fewer stops' : `All ${stops.length} stops`;
+}
+
+$('d-more').addEventListener('click', () => {
+  allStops = !allStops;
+  if (detail) renderDetail(detail);
+});
+
+// ---- Recent trains (on this device) ----
+
+function remember(t) {
+  const recent = store.get('recent', []).filter((r) => r.id !== t.id);
+  recent.unshift({ id: t.id, text: `${t.mode ? t.operator : t.headcode} · ${routeLabel(t) || shortText(t)}` });
+  store.set('recent', recent.slice(0, 5));
 }
 
 // ---- Search ----
@@ -714,6 +865,7 @@ let stationHits = [];
 let stationTimer = null;
 let stationPending = false;
 const TIME_IN_QUERY = /\b([01]?\d|2[0-3])[:.]?[0-5]\d\b/;
+const input = $('search-input');
 
 function searchTrains(query) {
   const q = query.trim().toLowerCase();
@@ -759,87 +911,136 @@ function lookUpStations(query) {
   stationTimer = setTimeout(async () => {
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-      if ($('search-input').value.trim() !== q) return;
+      if (input.value.trim() !== q) return;
       stationHits = res.ok ? (await res.json()).results : [];
     } catch { /* the local matches stand */ }
-    if ($('search-input').value.trim() !== q) return;
+    if (input.value.trim() !== q) return;
     stationPending = false;
     results = searchResults(q);
     activeResult = results.length ? Math.max(0, activeResult) : -1;
-    renderResults();
+    renderSearch();
   }, 200);
 }
 
-function renderResults() {
+const resultRow = (t, title, sub, i) => `<li class="result" role="option" id="result-${i}" data-id="${escapeHtml(t.id)}" aria-selected="${i === activeResult}">`
+  + `${badgeHtml(badgeOf(t), 'fixed')}<span class="r-main"><span class="r-title">${escapeHtml(title)}</span><span class="r-sub">${escapeHtml(sub)}</span></span>`
+  + `${!t.mode && t.delayMin > 0 ? `<span class="r-badge">+${Number(t.delayMin)}</span>` : '<span></span>'}</li>`;
+
+/** With nothing typed: what you can search for, with live examples, and recent trains. */
+function hintsHtml() {
+  const now = serverNow();
+  const express = [...trains.values()].find((t) => !t.mode && visible(t) && /^1/.test(t.headcode) && t.destination && t.state === 'moving');
+  const [h, m] = timeFmt.format(now).split(':').map(Number);
+  const slot = m < 30 ? `${String(h).padStart(2, '0')}:30` : `${String((h + 1) % 24).padStart(2, '0')}:00`;
+  const hint = (q, icon, label) => `<li class="result hint" role="option" data-q="${escapeHtml(q)}"><span class="r-ic">${icon}</span><span class="r-main"><span class="r-title">${escapeHtml(q)}</span><span class="r-sub">${escapeHtml(label)}</span></span><span></span></li>`;
+  let html = '<li class="hint-h" role="presentation">Try</li>'
+    + hint(express?.headcode ?? '1A01', ICONS.train, "A train's headcode")
+    + hint(`Paddington ${slot}`, ICONS.pin, 'Trains calling at a station, at a time')
+    + hint('Victoria', ICONS.route, 'A line, operator or destination');
+  const recent = store.get('recent', []).filter((r) => trains.has(r.id));
+  if (recent.length) {
+    html += '<li class="hint-h" role="presentation">Recent</li>'
+      + recent.map((r) => `<li class="result hint" role="option" data-id="${escapeHtml(r.id)}"><span class="r-ic">${ICONS.recent}</span><span class="r-main"><span class="r-title">${escapeHtml(r.text)}</span></span><span></span></li>`).join('');
+  }
+  return html;
+}
+
+function renderSearch() {
   const list = $('search-results');
-  const input = $('search-input');
-  if (!input.value.trim()) {
-    hideResults();
-    return;
-  }
-  if (!results.length) {
-    list.innerHTML = `<li class="result empty" role="option" aria-disabled="true">${stationPending ? 'Searching…' : 'No matching trains'}</li>`;
+  const q = input.value.trim();
+  $('search').classList.toggle('has-text', Boolean(q));
+  $('search-clear').hidden = !q;
+  if (!q) {
+    list.innerHTML = hintsHtml();
+  } else if (!results.length) {
+    // Station searches only see trains on the map: say so, or a later time looks broken.
+    const time = TIME_IN_QUERY.exec(q)?.[0];
+    const empty = stationPending ? 'Searching…'
+      : time ? `No train on the map calls there around ${time}. Only trains running now are found; later ones appear once they set off.`
+        : 'No train on the map matches. Try a headcode, a line or operator, or a station.';
+    list.innerHTML = `<li class="result empty" role="option" aria-disabled="true">${escapeHtml(empty)}</li>`;
   } else {
-    list.innerHTML = results.map(({ t, sub }, i) => `
-      <li class="result" role="option" id="result-${i}" data-id="${escapeHtml(t.id)}" aria-selected="${i === activeResult}">
-        <span class="r-main"><span class="r-title">${shortHtml(t)}</span><span class="r-sub">${escapeHtml(sub)}</span></span>
-        ${!t.mode && t.delayMin > 0 ? `<span class="r-badge">+${t.delayMin}</span>` : ''}
-      </li>`).join('');
+    list.innerHTML = results.map(({ t, sub }, i) => resultRow(t, shortText(t), sub, i)).join('');
   }
-  list.hidden = false;
-  $('browse').classList.add('searching');
+  $('search-pop').hidden = false;
   input.setAttribute('aria-expanded', 'true');
   input.setAttribute('aria-activedescendant', activeResult >= 0 ? `result-${activeResult}` : '');
 }
 
 function hideResults() {
-  $('search-results').hidden = true;
-  $('browse').classList.remove('searching');
-  $('search-input').setAttribute('aria-expanded', 'false');
+  $('search-pop').hidden = true;
+  input.setAttribute('aria-expanded', 'false');
   activeResult = -1;
 }
 
-$('search-input').addEventListener('input', (e) => {
-  lookUpStations(e.target.value);
-  results = searchResults(e.target.value);
+function onSearchInput() {
+  lookUpStations(input.value);
+  results = searchResults(input.value);
   activeResult = results.length ? 0 : -1;
-  renderResults();
+  renderSearch();
+}
+
+input.addEventListener('input', onSearchInput);
+input.addEventListener('focus', () => {
+  closeLayers();
+  closeChooser();
+  if (isNarrow() && sheetFull) setSheetFull(false);
+  renderSearch();
 });
-$('search-input').addEventListener('focus', (e) => {
-  if (e.target.value.trim()) renderResults();
-});
-$('search-input').addEventListener('keydown', (e) => {
+input.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    if (!results.length) return;
+    if (!results.length || !input.value.trim()) return;
     e.preventDefault();
     activeResult = (activeResult + (e.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length;
-    renderResults();
+    renderSearch();
   } else if (e.key === 'Enter') {
     e.preventDefault();
-    const r = results[Math.max(0, activeResult)];
+    const r = input.value.trim() && results[Math.max(0, activeResult)];
     if (r) choose(r.t.id);
   } else if (e.key === 'Escape') {
     e.stopPropagation();
-    e.target.value = '';
-    hideResults();
+    if (input.value) {
+      input.value = '';
+      onSearchInput();
+    } else {
+      input.blur();
+    }
   }
 });
-$('search-input').addEventListener('blur', () => setTimeout(hideResults, 150));
+input.addEventListener('blur', () => setTimeout(() => {
+  if (document.activeElement !== input) hideResults();
+}, 150));
 // mousedown keeps focus in the input until the click lands.
-$('search-results').addEventListener('mousedown', (e) => e.preventDefault());
+$('search-pop').addEventListener('mousedown', (e) => e.preventDefault());
 $('search-results').addEventListener('click', (e) => {
-  const li = e.target.closest('.result[data-id]');
-  if (li) choose(li.dataset.id);
+  const li = e.target.closest('.result');
+  if (li?.dataset.id) choose(li.dataset.id);
+  else if (li?.dataset.q) {
+    input.value = li.dataset.q;
+    onSearchInput();
+    input.focus();
+  }
+});
+$('search-clear').addEventListener('mousedown', (e) => e.preventDefault());
+$('search-clear').addEventListener('click', () => {
+  input.value = '';
+  onSearchInput();
+  input.focus();
 });
 
 function choose(id) {
-  $('search-input').value = '';
-  $('search-input').blur();
+  input.value = '';
+  $('search').classList.remove('has-text');
+  $('search-clear').hidden = true;
+  input.blur();
   hideResults();
   select(id);
 }
 
 // ---- Rendering loop ----
+
+let lastNearby = 0;
+let lastLayers = 0;
 
 function render() {
   const source = map.getSource('trains');
@@ -869,104 +1070,71 @@ function render() {
     });
   }
   source?.setData({ type: 'FeatureCollection', features });
-  renderLegend(features.length, counts, perNet);
+  renderKey(now, counts, perNet);
 
   const sel = selectedId && trains.get(selectedId);
   if (sel) {
-    $('d-meta').textContent = metaLabel(sel, now);
+    renderLive(sel, now);
     drawRouteLine(now);
     if (following && !map.isMoving()) map.jumpTo({ center: positionOf(sel, now), padding: mapPadding() });
   }
   renderCallout(sel, now);
-  renderConnection(now);
+  // Lists that redraw as numbers change hold still while a button or row is
+  // pressed, or the press and release land on different elements and the click is lost.
+  if (!pressing) {
+    if (sheetMode === 'nearby' && now - lastNearby > 1000) renderNearby();
+    if (layersOpen && now - lastLayers > 2000) renderLayers();
+  }
 }
 
-/**
- * How many trains are showing, then the colour key with counts: National
- * Rail by lateness while it is on, otherwise each TfL network shown.
- */
-function renderLegend(total, counts, perNet) {
-  // Until the first snapshot, "0 total" would say there are no trains.
-  if (!haveSnapshot) {
-    setHtml($('legend'), '<span class="lg-loading">Loading trains…</span>');
-    return;
-  }
-  const cell = (n, label, color) => `<span class="lg"><b>${color ? `<i class="dot" style="background:${color}"></i>` : ''}${n.toLocaleString()}</b>${label}</span>`;
-  const cells = [cell(total, 'total')];
-  if (shown.has('rail')) {
-    cells.push(cell(counts.ontime, 'on time', DELAY_COLORS.ontime), cell(counts.minor, '1–4 min late', DELAY_COLORS.minor), cell(counts.major, '5+ min late', DELAY_COLORS.major));
-  } else {
-    for (const net of NETWORKS) if (shown.has(net)) cells.push(cell(perNet[net] ?? 0, NET_LABELS[net], NET_COLORS[net]));
-  }
-  setHtml($('legend'), cells.join(''));
-}
+let pressing = false;
+document.addEventListener('pointerdown', () => { pressing = true; }, { capture: true, passive: true });
+for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, () => { pressing = false; }, { capture: true, passive: true });
 
-/** Green dot while live; a word only when something is wrong. */
-function renderConnection(now) {
+/** Bottom left: live or not, the clock, then the colour key with counts. */
+function renderKey(now, counts, perNet) {
   const s = lastStatus;
-  let state = 'ok';
-  let text = '';
-  let title = '';
-  if (!streamOk) {
-    state = 'bad';
-    text = s ? 'Reconnecting…' : '';
-    title = 'Connecting to the server';
-  } else if (s) {
-    const last = s.stats?.lastMessageAt;
-    title = `Live · last update ${last ? ago(now - last) : '—'} · London time`;
+  const live = streamOk
+    ? `<span id="k-live" class="k-live"><i class="conn-dot ok"></i>Live ${hhmm(now)}</span>`
+    : `<span id="k-live" class="k-live bad"><i class="conn-dot bad"></i>${s ? 'Reconnecting…' : 'Connecting…'}</span>`;
+  const tags = [];
+  if (s?.feed === 'demo') tags.push('<span class="tag demo" data-tip="National Rail trains are simulated in demo mode; TfL trains are live.">Rail simulated</span>');
+  else if (s && !s.connected) tags.push(`<span class="tag down" data-tip="${escapeHtml(s.detail)}">Rail offline</span>`);
+  const tfl = s?.sources?.tfl;
+  if (tfl && !tfl.connected) tags.push(`<span class="tag down" data-tip="${escapeHtml(tfl.detail)}">TfL offline</span>`);
+
+  let cells;
+  if (!haveSnapshot) {
+    cells = '<span class="k-loading">Loading trains…</span>';
+  } else {
+    const cell = (n, label, color) => `<span class="kc" data-tip="${escapeHtml(`${n.toLocaleString('en-GB')} ${label}`)}"><i class="dot" style="background:${color}"></i><b>${n.toLocaleString('en-GB')}</b><span class="kl">${label}</span></span>`;
+    const list = [];
+    if (shown.has('rail')) {
+      list.push(cell(counts.ontime, 'on time', DELAY_COLORS.ontime), cell(counts.minor, '1–4 min late', DELAY_COLORS.minor), cell(counts.major, '5+ min late', DELAY_COLORS.major));
+    } else {
+      for (const net of NETWORKS) if (shown.has(net)) list.push(cell(perNet[net] ?? 0, NET_LABELS[net], NET_COLORS[net]));
+    }
+    cells = list.length ? list.join('') : '<span>All networks hidden</span>';
   }
-  $('conn-dot').className = `conn-dot ${state}`;
-  $('conn-text').textContent = text;
-  $('conn-text').hidden = !text;
-  $('status').title = title;
+  setHtml($('key'), `${live}${tags.join('')}<span class="k-sep"></span>${cells}`);
+  const last = s?.stats?.lastMessageAt;
+  $('k-live').dataset.tip = streamOk ? `Last update ${last ? ago(now - last) : '—'} · London time` : 'Connecting to the server';
 }
 
 function applyStatus(s) {
   lastStatus = s;
-  const tags = [];
-  const credits = [];
-  if (s.feed === 'demo') {
-    tags.push('<span class="tag demo" title="National Rail trains are simulated in demo mode; TfL trains are live.">Rail simulated</span>');
-    credits.push('National Rail trains simulated · Stations: NaPTAN (OGL)');
-  } else {
-    if (!s.connected) tags.push(`<span class="tag down" title="${escapeHtml(s.detail)}">Rail offline</span>`);
-    credits.push(RAIL_ATTRIBUTION);
-  }
-  const tfl = s.sources?.tfl;
-  if (tfl) {
-    if (!tfl.connected) tags.push(`<span class="tag down" title="${escapeHtml(tfl.detail)}">TfL offline</span>`);
-    credits.push('Powered by TfL Open Data');
-  }
-  setHtml($('notices'), tags.join(''));
-  setAttribution(credits.join(' | '));
-  // Rail operators come and go with the trains; disruptions change too.
-  renderFilters();
-}
-
-let attribution = null;
-let attributionText = null;
-/** Data credits go in the map's own attribution (the ⓘ), out of the panel. */
-function setAttribution(text) {
-  if (text === attributionText) return;
-  attributionText = text;
-  if (attribution) map.removeControl(attribution);
-  attribution = new maplibregl.AttributionControl({ compact: true, customAttribution: text || undefined });
-  // On phones the bottom sheet would cover the bottom corners, and the open
-  // credits would run under the zoom buttons: start them closed behind the ⓘ.
-  map.addControl(attribution, isNarrow() ? 'top-left' : 'bottom-right');
-  if (isNarrow()) {
-    const el = map.getContainer().querySelector('.maplibregl-ctrl-attrib');
-    el?.classList.remove('maplibregl-compact-show');
-    el?.removeAttribute('open');
-  }
+  // Disrupted TfL lines, on the Layers button.
+  const lines = Object.values(s.sources?.tfl?.lines ?? {});
+  const badge = $('layers-count');
+  badge.hidden = !lines.length;
+  badge.textContent = String(lines.length);
+  badge.classList.toggle('closed', lines.some((l) => l.closed));
+  badge.title = `${lines.length} TfL line${lines.length === 1 ? '' : 's'} disrupted`;
+  if (layersOpen) renderLayers();
 }
 
 function setClock(serverTime) {
   if (serverTime) clockOffset = serverTime - Date.now();
-}
-
-function tickClock() {
-  $('clock').textContent = timeFmt.format(serverNow());
 }
 
 function connect() {
@@ -995,7 +1163,7 @@ function connect() {
     if (!sel) clearSelection();
     else if (stampOf(sel) !== detailStamp) loadDetail(selectedId);
     // Same section: refresh times ("in 3 min") and delay.
-    else if (detail) renderDetail(detail, false);
+    else if (detail) renderDetail(detail);
     else renderDetailHead(sel);
   });
   es.addEventListener('status', (e) => applyStatus(JSON.parse(e.data)));
@@ -1050,11 +1218,11 @@ map.on('styleimagemissing', (e) => {
 });
 
 function applyRailLines() {
-  if (map.getLayer('openrailwaymap')) {
-    for (const id of ['openrailwaymap', 'rail-emphasis']) map.setLayoutProperty(id, 'visibility', railLines ? 'visible' : 'none');
-  }
-  document.querySelector('.rail-toggle')?.setAttribute('aria-pressed', String(railLines));
+  if (!map.getLayer('openrailwaymap')) return;
+  for (const id of ['openrailwaymap', 'rail-emphasis']) map.setLayoutProperty(id, 'visibility', railLines ? 'visible' : 'none');
 }
+
+const EMPTY = { type: 'FeatureCollection', features: [] };
 
 map.on('load', () => {
   const firstSymbol = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
@@ -1091,13 +1259,13 @@ map.on('load', () => {
   }, firstSymbol);
 
   // Selected train's route in its colour: covered track pale, track ahead solid.
-  map.addSource('route-line', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addSource('route-line', { type: 'geojson', data: EMPTY });
   map.addLayer({
     id: 'route-casing',
     type: 'line',
     source: 'route-line',
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': THEME.casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 7, 12, 13] },
+    paint: { 'line-color': THEME.casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 9, 12, 15] },
   });
   map.addLayer({
     id: 'route-line',
@@ -1108,17 +1276,17 @@ map.on('load', () => {
       'line-color': ['get', 'color'],
       // Over the white casing, a translucent line reads as a pale tint.
       'line-opacity': ['match', ['get', 'part'], 'behind', 0.35, 1],
-      'line-width': ['interpolate', ['linear'], ['zoom'], 5, 4, 12, 8],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 5, 5, 12, 10],
     },
   });
   // Stations: small hollow markers, so they never look like trains.
-  map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addSource('route', { type: 'geojson', data: EMPTY });
   map.addLayer({
     id: 'route-stops',
     type: 'circle',
     source: 'route',
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 2.5, 12, 4],
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 2.5, 12, 4.5],
       'circle-color': THEME.casing,
       'circle-stroke-color': ['get', 'color'],
       'circle-stroke-opacity': ['match', ['get', 'status'], 'passed', 0.45, 1],
@@ -1144,7 +1312,7 @@ map.on('load', () => {
     },
   });
 
-  map.addSource('trains', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addSource('trains', { type: 'geojson', data: EMPTY });
   // Trains: filled dots with an arrow for the direction of travel, clearly
   // bigger than station markers; the selected one also gets a dark ring.
   map.addLayer({
@@ -1192,32 +1360,106 @@ map.on('load', () => {
     paint: { 'text-color': THEME.ink, 'text-halo-color': THEME.halo, 'text-halo-width': 1.5 },
   });
 
-  map.on('click', (e) => {
-    const id = trainAt(e.point);
-    if (id) select(id);
-    else if (selectedId) clearSelection();
+  // You: a blue dot, in a pale circle as wide as the position's accuracy.
+  map.addSource('me', { type: 'geojson', data: EMPTY });
+  map.addLayer({
+    id: 'me-accuracy',
+    type: 'circle',
+    source: 'me',
+    paint: {
+      'circle-radius': ['interpolate', ['exponential', 2], ['zoom'], 0, ['get', 'r0'], 22, ['*', ['get', 'r0'], 4194304]],
+      'circle-color': THEME.me,
+      'circle-opacity': 0.12,
+      'circle-stroke-color': THEME.me,
+      'circle-stroke-opacity': 0.35,
+      'circle-stroke-width': 1,
+    },
   });
-  map.on('mousemove', (e) => showTooltip(trainAt(e.point), e.originalEvent));
+  map.addLayer({
+    id: 'me-dot',
+    type: 'circle',
+    source: 'me',
+    paint: { 'circle-radius': 7, 'circle-color': THEME.me, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 },
+  });
+
+  map.on('click', onMapClick);
+  map.on('mousemove', (e) => showTooltip(trainsAt(e.point, 8)[0]?.id, e.originalEvent));
   map.on('mouseout', () => showTooltip(null));
-  map.on('dragstart', () => { if (following) setFollow(false); });
+  // Only moves you make: following a train moves the map four times a second.
+  map.on('movestart', (e) => { if (e.originalEvent) closeChooser(); });
+  map.on('dragstart', () => {
+    if (following) setFollow(false);
+    // Moving the map means looking at it.
+    if (sheetFull) setSheetFull(false);
+    closeLayers();
+  });
   if (detail) setRoute(detail);
+  updateMeLayer();
   applyRailLines();
   setFocusStyle();
   render();
 });
 
-/** The train nearest a screen point, within a few pixels (trains bunch up at stations). */
-function trainAt(point) {
-  if (!map.getLayer('trains')) return null;
-  const box = [[point.x - 6, point.y - 6], [point.x + 6, point.y + 6]];
-  let best = null;
+// ---- Picking a train on the map ----
+
+/** Trains within `radius` px of a screen point, nearest first. */
+function trainsAt(point, radius) {
+  if (!map.getLayer('trains')) return [];
+  const box = [[point.x - radius, point.y - radius], [point.x + radius, point.y + radius]];
+  const hits = new Map();
   for (const f of map.queryRenderedFeatures(box, { layers: ['trains'] })) {
     const p = map.project(f.geometry.coordinates);
     const d = Math.hypot(p.x - point.x, p.y - point.y);
-    if (!best || d < best.d) best = { id: f.properties.id, d };
+    if (d <= radius && !(hits.get(f.properties.id) <= d)) hits.set(f.properties.id, d);
   }
-  return best?.id ?? null;
+  return [...hits].map(([id, d]) => ({ id, d })).sort((a, b) => a.d - b.d);
 }
+
+// A finger is wide: a tap takes trains within 22 px; a mouse, 8 px. If that
+// catches several with none clearly nearest, ask which.
+function onMapClick(e) {
+  if (!$('chooser').hidden) {
+    closeChooser();
+    return;
+  }
+  const touch = coarse.matches || e.originalEvent?.pointerType === 'touch';
+  const hits = trainsAt(e.point, touch ? 22 : 8);
+  if (!hits.length) {
+    if (layersOpen) closeLayers();
+    else if (selectedId) clearSelection();
+    return;
+  }
+  const clear = hits.length === 1 || hits[1].d - hits[0].d > (touch ? 12 : 5);
+  if (clear) select(hits[0].id);
+  else showChooser(hits.slice(0, 6).map((h) => h.id), e.point, hits.length);
+}
+
+function showChooser(ids, point, total) {
+  const el = $('chooser');
+  const rows = ids.map((id) => trains.get(id)).filter(Boolean).map((t) => `<button type="button" class="ch-row" data-id="${escapeHtml(t.id)}">`
+    + `${badgeHtml(badgeOf(t), 'fixed')}<span class="r-main"><span class="r-title">${escapeHtml(shortText(t))}</span><span class="r-sub">${escapeHtml(whereLabel(t))}</span></span></button>`);
+  const head = total > rows.length ? `${total} trains here; the nearest ${rows.length}, or zoom in` : `${rows.length} trains here`;
+  el.innerHTML = `<div class="ch-head">${head}</div>${rows.join('')}`;
+  el.hidden = false;
+  const r = map.getContainer().getBoundingClientRect();
+  const x = r.left + point.x;
+  const y = r.top + point.y;
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  el.style.left = `${Math.max(8, Math.min(x - w / 2, window.innerWidth - w - 8))}px`;
+  el.style.top = `${y + 20 + h > window.innerHeight - 8 ? Math.max(8, y - h - 20) : y + 20}px`;
+  el.querySelector('.ch-row')?.focus({ preventScroll: true });
+}
+
+function closeChooser() {
+  $('chooser').hidden = true;
+}
+$('chooser').addEventListener('click', (e) => {
+  const row = e.target.closest('.ch-row');
+  if (!row) return;
+  closeChooser();
+  select(row.dataset.id);
+});
 
 function showTooltip(id, event) {
   const tip = $('tooltip');
@@ -1225,7 +1467,7 @@ function showTooltip(id, event) {
   map.getCanvas().style.cursor = t ? 'pointer' : '';
   // Touch devices have no hover; the tap selects instead.
   if (!t || !event || event.pointerType === 'touch') {
-    tip.hidden = true;
+    if (!tip.dataset.badge) tip.hidden = true;
     return;
   }
   const late = !t.mode && t.delayMin > 0 ? ` · +${t.delayMin} min` : '';
@@ -1233,6 +1475,7 @@ function showTooltip(id, event) {
   const b = badgeOf(t);
   const who = b.name !== b.code ? `${b.name} · ` : '';
   tip.innerHTML = `<div class="tt-title">${shortHtml(t)}${escapeHtml(late)}</div><span class="tt-sub">${escapeHtml(who + whereLabel(t))}</span>`;
+  delete tip.dataset.badge;
   tip.hidden = false;
   const x = Math.min(event.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
   const y = Math.min(event.clientY + 14, window.innerHeight - tip.offsetHeight - 8);
@@ -1240,49 +1483,55 @@ function showTooltip(id, event) {
   tip.style.top = `${y}px`;
 }
 
-// Badges show the full name behind their code at once, under the badge. The
-// browser's own title attribute takes a second or two to appear.
-document.addEventListener('mouseover', (e) => {
+// Anything with data-tip (badges, facility icons, counts) shows its text at
+// once on hover, or for a moment when tapped: the browser's own title takes a
+// second or two, and never shows on a touch screen.
+let tipTimer = null;
+function showTip(el) {
   const tip = $('tooltip');
-  // A line's button says more than the badge inside it (its disruption).
-  const el = e.target.closest?.('.lf-btn[data-tip]') ?? e.target.closest?.('[data-tip]');
-  if (!el) {
-    if (tip.dataset.badge) {
-      tip.hidden = true;
-      delete tip.dataset.badge;
-    }
-    return;
-  }
   tip.textContent = el.dataset.tip;
   tip.dataset.badge = 'true';
   tip.hidden = false;
   const r = el.getBoundingClientRect();
   tip.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - tip.offsetWidth - 8))}px`;
   tip.style.top = `${r.bottom + tip.offsetHeight + 12 > window.innerHeight ? r.top - tip.offsetHeight - 6 : r.bottom + 6}px`;
+}
+function hideTip() {
+  const tip = $('tooltip');
+  if (!tip.dataset.badge) return;
+  tip.hidden = true;
+  delete tip.dataset.badge;
+}
+document.addEventListener('mouseover', (e) => {
+  if (coarse.matches) return;
+  const el = e.target.closest?.('[data-tip]');
+  if (el) showTip(el);
+  else hideTip();
+});
+document.addEventListener('pointerup', (e) => {
+  if (e.pointerType !== 'touch' || drag?.moved || performance.now() < swallowUntil) return;
+  const el = e.target.closest?.('[data-tip]');
+  // A tap on a row or button does what the row does; no tooltip on top.
+  if (!el || el.closest('button, .result, .n-row, .ch-row')) return;
+  showTip(el);
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(hideTip, 2500);
 });
 // Whatever it was over may be redrawn or scrolled away.
-for (const type of ['click', 'scroll']) {
-  document.addEventListener(type, () => {
-    const tip = $('tooltip');
-    if (!tip.dataset.badge) return;
-    tip.hidden = true;
-    delete tip.dataset.badge;
-  }, { capture: true, passive: true });
-}
+document.addEventListener('scroll', hideTip, { capture: true, passive: true });
+document.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch') hideTip();
+}, { capture: true, passive: true });
 
-// ---- Network and line filter ----
+// ---- Layers: networks, operators, lines, disruptions, map options ----
 //
-// Two chips: National Rail, and TfL for its four networks together. "Lines"
-// lays them out as rows, TfL's networks under it, each with its lines or
-// operators beside it. A badge is lit only when its train would show; picking
-// one while its network is off shows that line alone, and hiding a network's
-// last line switches the network off.
+// National Rail, and TfL for its four networks together (each of which can
+// also go on its own). Under them, operators and TfL lines by name. A row is
+// ticked only when its trains would show; ticking one while its network is
+// off shows that line alone, and unticking a network's last line switches
+// the network off.
 
 const TFL_NETWORKS = NETWORKS.filter((n) => n !== 'rail');
-const GROUPS = [
-  { id: 'rail', label: 'National Rail', color: NET_COLORS.rail, nets: ['rail'] },
-  { id: 'tfl', label: 'TfL', color: '#0019A8', nets: TFL_NETWORKS },
-];
 
 /** Badges per network: rail operators seen on the map, then every TfL line. */
 function lineGroups() {
@@ -1294,83 +1543,110 @@ function lineGroups() {
   }
   return NETWORKS.map((net) => ({
     net,
-    badges: net === 'rail'
-      ? [...operators.values()].sort((a, b) => a.code.localeCompare(b.code))
-      : Object.keys(TFL_LINES[net]).map(tflBadge),
+    badges: net === 'rail' ? [...operators.values()] : Object.keys(TFL_LINES[net]).map(tflBadge),
   }));
 }
 
 const netOfKey = (key) => (key.startsWith('rail:') ? 'rail' : netOfLine(key.slice(4)));
 
-const SLIDERS_ICON = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M3 6h7M14 6h3M3 14h3M10 14h7"/><circle cx="12" cy="6" r="2"/><circle cx="8" cy="14" r="2"/></svg>';
-
-function renderFilters() {
-  const el = $('filters');
+function renderLayers() {
+  lastLayers = serverNow();
+  const el = $('layers');
   const disrupted = lastStatus?.sources?.tfl?.lines ?? {};
-  const groups = lineGroups();
-  // A chip for a group (National Rail, TfL) or, under TfL, one network.
-  const chip = (id, label, color, nets, sub = false) => {
-    const badges = groups.filter((g) => nets.includes(g.net)).flatMap((g) => (shown.has(g.net) ? g.badges : g.badges.map((b) => ({ ...b, off: true }))));
-    const on = nets.some((n) => shown.has(n));
-    const lit = badges.filter((b) => !b.off && !hiddenLines.has(b.key)).length;
-    const partial = on && badges.length > 1 && lit < badges.length;
-    const flagged = badges.some((b) => disrupted[b.key.slice(4)] && b.key.startsWith('tfl:'));
-    return `<button type="button" class="chip${sub ? ' sub' : ''}" data-focus="nets:${id}" data-nets="${nets.join(' ')}" aria-pressed="${on}">`
-      + `<span class="net-dot" style="background:${color}"></span>${label}`
-      + `${partial ? `<span class="net-count">${lit}/${badges.length}</span>` : ''}`
-      + `${flagged && !linesOpen ? '<span class="flag" title="Some lines disrupted"></span>' : ''}</button>`;
-  };
-  const groupChip = (g) => chip(g.id, g.label, g.color, g.nets);
-  const toggle = `<button type="button" class="lines-toggle" data-focus="toggle" aria-expanded="${linesOpen}" title="Choose lines and operators">${SLIDERS_ICON}Lines</button>`;
-
-  let html;
-  if (!linesOpen) {
-    html = `<div class="chips">${toggle}${GROUPS.map(groupChip).join('')}</div>`;
-  } else {
-    const lines = (g) => {
-      const on = shown.has(g.net);
-      const badges = g.badges.length > 1 ? g.badges.map((b) => {
-        const status = b.key.startsWith('tfl:') ? disrupted[b.key.slice(4)] : null;
-        const flag = status ? `<span class="flag${status.closed ? ' closed' : ''}"></span>` : '';
-        const label = `${b.name}${status ? ` (${status.summary})` : ''}`;
-        return `<button type="button" class="lf-btn" data-focus="line:${escapeHtml(b.key)}" data-key="${escapeHtml(b.key)}" aria-pressed="${on && !hiddenLines.has(b.key)}" aria-label="${escapeHtml(label)}" data-tip="${escapeHtml(label)}">${badgeHtml(b)}${flag}</button>`;
-      }).join('') : '';
-      return `<div class="net-lines">${badges}</div>`;
-    };
-    const rail = groups.find((g) => g.net === 'rail');
-    const rows = groupChip(GROUPS[0]) + lines(rail) + groupChip(GROUPS[1]) + '<div></div>'
-      + groups.filter((g) => g.net !== 'rail').map((g) => chip(g.net, NET_LABELS[g.net], NET_COLORS[g.net], [g.net], true) + lines(g)).join('');
-    // Closed lines first: they explain why a line has no trains.
-    const issues = Object.entries(disrupted)
-      .sort(([a, s], [b, t]) => Number(t.closed) - Number(s.closed) || lineName(a).localeCompare(lineName(b)))
-      .map(([line, s]) => disruptionHtml(line, s, true)).join('');
-    html = `<div class="filters-bar">${toggle}<span class="spacer"></span>`
-      + '<button type="button" class="link-btn" data-focus="act:all" data-act="all">Show all</button>'
-      + '<button type="button" class="link-btn" data-focus="act:none" data-act="none">Hide all</button></div>'
-      + `<div class="net-rows">${rows}</div>`
-      + (issues ? `<div class="disruptions">${issues}</div>` : '');
+  const perKey = new Map();
+  const perNet = {};
+  for (const t of trains.values()) {
+    const key = badgeOf(t).key;
+    perKey.set(key, (perKey.get(key) ?? 0) + 1);
+    perNet[t.mode ?? 'rail'] = (perNet[t.mode ?? 'rail'] ?? 0) + 1;
   }
+  const n = (v) => (v ? v.toLocaleString('en-GB') : '');
+  const row = (state, attrs, icon, name, count, cls = '', after = '') => `<button type="button" class="lrow${cls ? ` ${cls}` : ''}" role="checkbox" aria-checked="${state}" ${attrs}>`
+    + `<span class="check" aria-hidden="true"></span><span class="lic">${icon}</span><span class="lname">${escapeHtml(name)}${after}</span><span class="lcount">${count}</span></button>`;
 
-  // Keep keyboard focus and the chip row's scroll position across redraws.
+  // Networks.
+  const tflOn = TFL_NETWORKS.filter((net) => shown.has(net)).length;
+  const tflState = tflOn === TFL_NETWORKS.length ? 'true' : tflOn ? 'mixed' : 'false';
+  let html = '<div class="lsec"><div class="lsec-h">Networks'
+    + `<button type="button" class="link-btn" data-act="${shown.size ? 'none' : 'all'}" data-focus="act:all">${shown.size ? 'Hide all' : 'Show all'}</button></div>`
+    + row(shown.has('rail'), 'data-nets="rail" data-focus="net:rail"', `<span class="lic rail">${ICONS.train}</span>`, 'National Rail', n(perNet.rail))
+    + row(tflState, `data-nets="${TFL_NETWORKS.join(' ')}" data-focus="net:tfl"`, TFL_MARK, 'TfL', n(TFL_NETWORKS.reduce((s, net) => s + (perNet[net] ?? 0), 0)))
+    + TFL_NETWORKS.map((net) => row(shown.has(net), `data-nets="${net}" data-focus="net:${net}"`, `<i class="swatch" style="background:${NET_COLORS[net]}"></i>`, NET_LABELS[net], n(perNet[net]), 'sub')).join('')
+    + '</div>';
+
+  // Operators and lines, busiest first.
+  const groups = lineGroups();
+  const list = (title, id, badges) => {
+    if (!badges.length) return '';
+    badges.sort((a, b) => (perKey.get(b.key) ?? 0) - (perKey.get(a.key) ?? 0) || a.name.localeCompare(b.name));
+    const open = moreRows[id] || badges.length <= SHORT_LIST + 1;
+    const rows = (open ? badges : badges.slice(0, SHORT_LIST)).map((b) => {
+      // A disrupted line gets a dot; what is wrong is under Disruptions.
+      const status = b.key.startsWith('tfl:') ? disrupted[b.key.slice(4)] : null;
+      const flag = status ? ` <i class="flag${status.closed ? ' closed' : ''}" data-tip="${escapeHtml(status.summary)}"></i>` : '';
+      const on = shown.has(netOfKey(b.key)) && !hiddenLines.has(b.key);
+      return row(on, `data-key="${escapeHtml(b.key)}" data-focus="line:${escapeHtml(b.key)}"`, badgeHtml(b, 'fixed'), b.name, n(perKey.get(b.key)), '', flag);
+    }).join('');
+    const toggle = badges.length > SHORT_LIST + 1
+      ? `<button type="button" class="link-btn" data-more="${id}" data-focus="more:${id}">${moreRows[id] ? 'Fewer' : `All ${badges.length}`}</button>`
+      : '';
+    return `<div class="lsec"><div class="lsec-h">${title}${toggle}</div>${rows}</div>`;
+  };
+  html += list('Operators', 'ops', [...groups.find((g) => g.net === 'rail').badges]);
+  html += list('TfL lines', 'lines', groups.filter((g) => g.net !== 'rail').flatMap((g) => g.badges));
+
+  // Closed lines first: they explain why a line has no trains.
+  const issues = Object.entries(disrupted)
+    .sort(([a, s], [b, t]) => Number(t.closed) - Number(s.closed) || lineName(a).localeCompare(lineName(b)))
+    .map(([line, s]) => disruptionHtml(line, s, true)).join('');
+  if (issues) html += `<div class="lsec"><div class="lsec-h">Disruptions</div>${issues}</div>`;
+
+  html += '<div class="lsec"><div class="lsec-h">Map</div>'
+    + `<button type="button" class="lrow plain" role="checkbox" aria-checked="${railLines}" data-act="rails" data-focus="act:rails"><span class="check" aria-hidden="true"></span><span class="lname">Railway lines</span><span></span></button>`
+    + '<div class="lrow plain unit"><span></span><span class="lname">Speeds and distances</span>'
+    + `<span class="seg" role="group" aria-label="Units"><button type="button" data-unit="kmh" data-focus="unit:kmh" aria-pressed="${speedUnit === 'kmh'}">km/h</button><button type="button" data-unit="mph" data-focus="unit:mph" aria-pressed="${speedUnit === 'mph'}">mph</button></span></div>`
+    + '</div>';
+
+  // Keep keyboard focus across redraws.
   const focused = el.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
-  const scrollLeft = el.querySelector('.chips')?.scrollLeft ?? 0;
   if (!setHtml(el, html)) return;
-  el.classList.toggle('open', linesOpen);
-  const chips = el.querySelector('.chips');
-  if (chips) chips.scrollLeft = scrollLeft;
   if (focused) el.querySelector(`[data-focus="${CSS.escape(focused)}"]`)?.focus();
 }
+
+function openLayers() {
+  layersOpen = true;
+  hideResults();
+  closeChooser();
+  if (isNarrow() && sheetFull) setSheetFull(false);
+  $('layers').hidden = false;
+  $('layers-btn').setAttribute('aria-expanded', 'true');
+  renderLayers();
+}
+
+function closeLayers() {
+  if (!layersOpen) return;
+  layersOpen = false;
+  $('layers').hidden = true;
+  $('layers-btn').setAttribute('aria-expanded', 'false');
+}
+
+$('layers-btn').addEventListener('click', () => (layersOpen ? closeLayers() : openLayers()));
+// A press anywhere else closes the menu. Not the map: its click handler closes
+// the menu itself, and must still see it open so the tap does not also close
+// the selected train.
+document.addEventListener('pointerdown', (e) => {
+  if (layersOpen && !e.target.closest('#layers, #layers-btn, #map')) closeLayers();
+  if (!$('chooser').hidden && !e.target.closest('#chooser, #map')) closeChooser();
+});
 
 function applyFilter(networks, hidden) {
   shown = new Set(networks.filter((n) => NETWORKS.includes(n)));
   hiddenLines = new Set(hidden);
-  try {
-    localStorage.setItem('networks', JSON.stringify([...shown]));
-    localStorage.setItem('hiddenLines', JSON.stringify([...hiddenLines]));
-  } catch { /* storage unavailable */ }
+  store.set('networks', [...shown]);
+  store.set('hiddenLines', [...hiddenLines]);
   const sel = selectedId && trains.get(selectedId);
   if (sel && !visible(sel)) clearSelection();
-  renderFilters();
+  if (layersOpen) renderLayers();
   render();
 }
 
@@ -1408,51 +1684,284 @@ function toggleLine(key) {
   applyFilter([...nets], [...hidden]);
 }
 
-$('filters').addEventListener('click', (e) => {
+function setSpeedUnit(unit) {
+  speedUnit = unit;
+  store.set('speedUnit', unit);
+  renderLayers();
+  if (detail) renderDetail(detail);
+  if (sheetMode === 'nearby') renderNearby();
+  render();
+}
+
+$('layers').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
-  if (!btn) return;
-  if (btn.classList.contains('lines-toggle')) {
-    linesOpen = !linesOpen;
-    setFolded(false);
-    renderFilters();
-  } else if (btn.dataset.act === 'all') {
-    applyFilter(NETWORKS, []);
-  } else if (btn.dataset.act === 'none') {
-    applyFilter([], []);
-  } else if (btn.dataset.nets) {
-    toggleNetworks(btn.dataset.nets.split(' '));
-  } else if (btn.dataset.key) {
-    toggleLine(btn.dataset.key);
-  }
+  if (!btn || btn.closest('summary')) return;
+  if (btn.dataset.act === 'all') applyFilter(NETWORKS, []);
+  else if (btn.dataset.act === 'none') applyFilter([], []);
+  else if (btn.dataset.act === 'rails') {
+    railLines = !railLines;
+    store.set('railLines', railLines);
+    applyRailLines();
+    renderLayers();
+  } else if (btn.dataset.more) {
+    moreRows[btn.dataset.more] = !moreRows[btn.dataset.more];
+    renderLayers();
+  } else if (btn.dataset.unit) setSpeedUnit(btn.dataset.unit);
+  else if (btn.dataset.nets) toggleNetworks(btn.dataset.nets.split(' '));
+  else if (btn.dataset.key) toggleLine(btn.dataset.key);
 });
 
-// ---- Phones: the bottom sheet folds down to show the map ----
+// ---- The card (computer) or bottom sheet (phone) ----
 
-function setFolded(on) {
-  const folded = on && isNarrow();
-  panel.classList.toggle('folded', folded);
-  $('sheet-handle').setAttribute('aria-expanded', String(!folded));
-  $('sheet-handle').setAttribute('aria-label', folded ? 'Show the panel' : 'Fold the panel to see the map');
+function openSheet(mode) {
+  sheetMode = mode;
+  $('detail').hidden = mode !== 'detail';
+  $('nearby').hidden = mode !== 'nearby';
+  sheet.hidden = !mode;
+  sheet.setAttribute('aria-label', mode === 'nearby' ? 'Trains near you' : 'Selected train');
+  document.body.classList.toggle('sheet-open', Boolean(mode));
+  $('sheet-body').scrollTop = 0;
+  if (mode === 'nearby') renderNearby();
+  setSheetFull(false);
+  updatePeek();
 }
-$('sheet-handle').addEventListener('click', () => setFolded(!panel.classList.contains('folded')));
-panel.querySelector('.panel-head').addEventListener('click', () => setFolded(false));
-$('search-input').addEventListener('focus', () => setFolded(false));
-// Moving the map means looking at it.
-map.on('dragstart', () => setFolded(true));
 
-// ---- Controls ----
+function setSheetFull(on) {
+  const was = sheetFull;
+  sheetFull = Boolean(on) && isNarrow() && Boolean(sheetMode);
+  if (sheetFull !== was && sheetMode === 'detail' && detail) renderCalls(detail, trains.get(detail.train.id) ?? detail.train, serverNow());
+  sheet.classList.toggle('full', sheetFull);
+  document.body.classList.toggle('sheet-full', sheetFull);
+  $('sheet-grip').setAttribute('aria-label', sheetFull ? 'Show less' : 'Show more');
+  if (!sheetFull) $('sheet-body').scrollTop = 0;
+  updateSheetVisible();
+}
 
-/** Map button that shows or hides the railway lines overlay. */
-class RailLinesControl {
+/**
+ * Phones: how much of the sheet shows when it peeks. The train's name, route,
+ * next stop and buttons; or the first three trains near you.
+ */
+function updatePeek() {
+  if (!sheetMode || !isNarrow()) {
+    updateSheetVisible();
+    return;
+  }
+  let end;
+  if (sheetMode === 'detail') end = $('detail').querySelector('.peek');
+  else {
+    const rows = $('n-list').children;
+    end = rows[Math.min(2, rows.length - 1)] ?? $('nearby').querySelector('.peek');
+  }
+  // offsetTop is from the sheet body (position: relative), under the grip.
+  // Plus the sheet's bottom padding: the iPhone home indicator's strip, which
+  // would otherwise cover the buttons.
+  const safe = parseFloat(getComputedStyle(sheet).paddingBottom) || 0;
+  const px = Math.ceil($('sheet-grip').offsetHeight + 2 + end.offsetTop + end.offsetHeight + 10 + safe);
+  if (px !== peekPx) {
+    peekPx = px;
+    sheet.style.setProperty('--peek', `${px}px`);
+  }
+  updateSheetVisible();
+}
+
+function updateSheetVisible() {
+  const v = !sheetMode || !isNarrow() ? 0 : sheetFull ? sheet.offsetHeight : peekPx;
+  document.documentElement.style.setProperty('--sheet-visible', `${v}px`);
+}
+
+/** Swipe down from a peeking sheet: close the train, or stop showing where you are. */
+function dismissSheet() {
+  if (sheetMode === 'detail') clearSelection();
+  else if (sheetMode === 'nearby') stopLocating();
+}
+
+// Dragging the sheet: up for all of it, down to peek or close. While it peeks
+// it drags from anywhere; swiped up, from its grip or top part (the rest scrolls).
+let drag = null;
+let swallowUntil = 0; // the click that ends a drag is not a tap
+function onSheetDown(e) {
+  if (!isNarrow() || !sheetMode || e.button > 0) return;
+  if (sheetFull && !e.target.closest('.sheet-grip, .peek')) return;
+  drag = { y: e.clientY, start: sheetFull ? 0 : sheet.offsetHeight - peekPx, moved: false, id: e.pointerId };
+}
+// On the window: a quick swipe can leave the sheet before the first move arrives.
+window.addEventListener('pointermove', (e) => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const dy = e.clientY - drag.y;
+  if (!drag.moved) {
+    if (Math.abs(dy) < 6) return;
+    drag.moved = true;
+    sheet.classList.add('dragging');
+  }
+  const y = Math.min(sheet.offsetHeight - 40, Math.max(0, drag.start + dy));
+  sheet.style.transform = `translateY(${y}px)`;
+});
+function onSheetUp(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag;
+  drag = null;
+  if (!d.moved) return;
+  sheet.classList.remove('dragging');
+  sheet.style.transform = '';
+  // Touch browsers can send the click well after pointerup.
+  swallowUntil = performance.now() + 350;
+  // A cancelled drag (the browser took over) snaps back where it was.
+  if (e.type === 'pointercancel') return;
+  const dy = e.clientY - d.y;
+  if (dy < -40) setSheetFull(true);
+  else if (dy > 40 && sheetFull) setSheetFull(false);
+  else if (dy > 70 && !sheetFull) dismissSheet();
+}
+window.addEventListener('pointerup', onSheetUp);
+window.addEventListener('pointercancel', onSheetUp);
+sheet.addEventListener('click', (e) => {
+  if (performance.now() > swallowUntil) return;
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
+sheet.addEventListener('pointerdown', onSheetDown);
+$('sheet-grip').addEventListener('click', () => setSheetFull(!sheetFull));
+
+// ---- Your location, and the trains near you ----
+
+function toast(text) {
+  const el = $('toast');
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { el.hidden = true; }, 6000);
+}
+
+function setLocateButton() {
+  const btn = document.querySelector('.locate-btn');
+  if (!btn) return;
+  btn.setAttribute('aria-pressed', String(locating));
+  btn.classList.toggle('pending', locating && !me);
+  btn.title = locating ? 'Stop showing my location' : 'Trains near me';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function startLocating() {
+  if (!('geolocation' in navigator)) {
+    toast("This browser can't share your location.");
+    return;
+  }
+  // Browsers only share a position with https:// pages (and localhost).
+  if (!window.isSecureContext) {
+    toast('Your location needs a secure connection: open this site over https://.');
+    return;
+  }
+  locating = true;
+  setLocateButton();
+  watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, { enableHighAccuracy: true, maximumAge: 15_000, timeout: 20_000 });
+}
+
+function stopLocating() {
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  locating = false;
+  me = null;
+  updateMeLayer();
+  setLocateButton();
+  if (sheetMode === 'nearby') openSheet(null);
+}
+
+function onPosition(p) {
+  const first = !me;
+  me = { lon: p.coords.longitude, lat: p.coords.latitude, acc: p.coords.accuracy };
+  updateMeLayer();
+  setLocateButton();
+  // A train picked while waiting stays; closing it shows the trains near you.
+  if (first && !selectedId) showNearby();
+  else if (sheetMode === 'nearby') renderNearby();
+}
+
+function onPositionError(err) {
+  // Once you have been found, a lost signal (a tunnel) or a slow fix keeps
+  // the last position; only a withdrawn permission ends it.
+  if (me && err.code !== err.PERMISSION_DENIED) return;
+  stopLocating();
+  toast(err.code === err.PERMISSION_DENIED
+    ? 'Location is blocked for this site. Allow it in your browser settings to see trains near you.'
+    : "Couldn't find your location. Try again in a moment.");
+}
+
+/** The trains near you, and the map around you. */
+function showNearby() {
+  if (selectedId) clearSelection();
+  else openSheet('nearby');
+  const zoom = Math.max(map.getZoom(), 12.5);
+  map.easeTo({ center: [me.lon, me.lat], zoom, padding: mapPadding(), duration: motion(800) });
+}
+
+function updateMeLayer() {
+  const source = map.getSource('me');
+  if (!source) return;
+  if (!me) {
+    source.setData(EMPTY);
+    return;
+  }
+  // Pixels per metre at zoom 0, for a circle as wide as the accuracy.
+  const r0 = (Math.min(me.acc, 2000) * 512) / (40_075_016.686 * Math.cos(me.lat * Math.PI / 180));
+  source.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [me.lon, me.lat] }, properties: { r0 } }] });
+}
+
+function renderNearby() {
+  if (sheetMode !== 'nearby') return;
+  const now = serverNow();
+  lastNearby = now;
+  if (!me) {
+    setHtml($('n-sub'), 'Finding you…');
+    setHtml($('n-list'), '');
+    updatePeek();
+    return;
+  }
+  const here = [me.lon, me.lat];
+  const all = [];
+  for (const t of trains.values()) {
+    if (!visible(t)) continue;
+    const d = metres(here, positionOf(t, now));
+    if (d < 20_000) all.push({ t, d });
+  }
+  all.sort((a, b) => a.d - b.d);
+  const within = all.filter((x) => x.d <= NEAR_METRES()).length;
+  const list = all.slice(0, Math.min(15, Math.max(within, 5)));
+  setHtml($('n-sub'), escapeHtml(within
+    ? `${within} train${within === 1 ? '' : 's'} within ${NEAR_LABEL()}`
+    : list.length ? `None within ${NEAR_LABEL()}; the nearest` : 'No trains nearby'));
+  const rows = list.map(({ t, d }) => {
+    let where;
+    if (t.state === 'terminated') where = `Terminated at ${t.from.name}`;
+    else if (t.state === 'stopped') where = `At ${t.from.name}`;
+    else {
+      const m = minutesUntil(t.departedAt + t.runMs, now);
+      const speed = speedOf(t);
+      where = m ? `${t.to.name} in ${m} min` : `Reaching ${t.to.name}`;
+      if (speed && t.freight) where += ` · ${speed.text}`;
+    }
+    return `<li class="n-row" data-id="${escapeHtml(t.id)}">${badgeHtml(badgeOf(t), 'fixed')}`
+      + `<span class="n-main"><span class="n-title">${escapeHtml(shortText(t))}</span><span class="n-where">${escapeHtml(where)}</span></span>`
+      + `<span class="n-dist">${fmtDistance(d)}</span></li>`;
+  }).join('');
+  if (setHtml($('n-list'), rows || '<li class="n-empty">Trains show here as they come near.</li>')) updatePeek();
+}
+
+$('n-list').addEventListener('click', (e) => {
+  const row = e.target.closest('.n-row');
+  if (row) select(row.dataset.id);
+});
+$('n-close').addEventListener('click', stopLocating);
+
+/** Map button: show where you are and the trains near you; again to stop. */
+class LocateControl {
   onAdd() {
     this.el = document.createElement('div');
     this.el.className = 'maplibregl-ctrl maplibregl-ctrl-group';
-    this.el.innerHTML = `<button type="button" class="rail-toggle" aria-pressed="${railLines}" title="Railway lines" aria-label="Railway lines">
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M7.5 2.5 6 17.5M12.5 2.5 14 17.5M5.6 6h8.8M5.2 10h9.6M4.8 14h10.4"/></svg></button>`;
+    this.el.innerHTML = `<button type="button" class="locate-btn" aria-pressed="false" title="Trains near me" aria-label="Trains near me">${ICONS.locate}</button>`;
     this.el.querySelector('button').addEventListener('click', () => {
-      railLines = !railLines;
-      try { localStorage.setItem('railLines', JSON.stringify(railLines)); } catch { /* storage unavailable */ }
-      applyRailLines();
+      if (!locating) startLocating();
+      else if (me && sheetMode !== 'nearby') showNearby();
+      else stopLocating();
     });
     return this.el;
   }
@@ -1462,25 +1971,56 @@ class RailLinesControl {
   }
 }
 
-try { railLines = JSON.parse(localStorage.getItem('railLines') ?? 'true') !== false; } catch { /* storage unavailable */ }
-map.addControl(new RailLinesControl(), 'top-right');
-setAttribution('');
+// ---- Controls and start-up ----
 
-try { hiddenLines = new Set(JSON.parse(localStorage.getItem('hiddenLines') ?? '[]')); } catch { /* storage unavailable */ }
-let savedNetworks = null;
-try { savedNetworks = JSON.parse(localStorage.getItem('networks') ?? 'null'); } catch { /* storage unavailable */ }
-applyFilter(Array.isArray(savedNetworks) ? savedNetworks : NETWORKS, [...hiddenLines]);
+// Bottom right, from the bottom up: credits, zoom, your location.
+map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: [RAIL_ATTRIBUTION, 'Powered by TfL Open Data'] }), 'bottom-right');
+{
+  // Start the credits folded behind the ⓘ: open, they run under the other buttons.
+  const el = map.getContainer().querySelector('.maplibregl-ctrl-attrib');
+  el?.classList.remove('maplibregl-compact-show');
+  el?.removeAttribute('open');
+}
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+map.addControl(new LocateControl(), 'bottom-right');
+
+railLines = store.get('railLines', true) !== false;
+speedUnit = store.get('speedUnit', 'kmh') === 'mph' ? 'mph' : 'kmh';
+const savedNetworks = store.get('networks', null);
+applyFilter(Array.isArray(savedNetworks) ? savedNetworks : NETWORKS, store.get('hiddenLines', []));
 
 $('d-close').addEventListener('click', clearSelection);
 $('d-fit').addEventListener('click', fitRoute);
 $('d-follow').addEventListener('click', () => setFollow(!following));
 
+function closePops() {
+  hideResults();
+  closeLayers();
+  closeChooser();
+}
+
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && selectedId && document.activeElement !== $('search-input')) clearSelection();
+  const typing = e.target.closest?.('input, textarea');
+  if (e.key === '/' && !typing) {
+    e.preventDefault();
+    input.focus();
+  } else if (e.key === 'Escape' && !typing) {
+    if (!$('chooser').hidden) closeChooser();
+    else if (layersOpen) {
+      closeLayers();
+      $('layers-btn').focus();
+    } else if (selectedId) clearSelection();
+  }
 });
 
+function onResize() {
+  map.resize();
+  input.placeholder = isNarrow() ? 'Search' : 'Search trains and stations';
+  if (!isNarrow() && sheetFull) setSheetFull(false);
+  updatePeek();
+}
+window.addEventListener('resize', onResize);
+onResize();
+
 setInterval(render, FRAME_MS);
-setInterval(tickClock, 1000);
-tickClock();
-window.addEventListener('resize', () => map.resize());
 connect();

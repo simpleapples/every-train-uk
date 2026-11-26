@@ -35,10 +35,11 @@ Trains glide along the real track, each with its whole route, next stop, delay a
 - 🚄 **What the train is.** Its class and name (Class 390 Pendolino, Class 800 Azuma), top speed, first class, catering and sleepers, read from the timetable.
 - 👥 **How busy the Tube is.** Tube, Overground, DLR and Elizabeth line trains show their rolling stock and how full they usually are on that section at that time, from TfL's NUMBAT model. (TfL publishes no live train loading.)
 - 🚦 **Line status built in.** TfL closures and delays are flagged on each line, so a quiet line explains itself (e.g. "Piccadilly: Planned Closure").
-- 🔎 **Search and filter.** Find a train by headcode, line, operator or destination, or the way passengers know it: by a station and a time ("Paddington 14:00"). Show any mix of networks, lines and operators, like "only the Central line and LNER".
+- 🔎 **Search and filter.** Find a train by headcode, line, operator or destination, or the way passengers know it: by a station and a time ("Paddington 14:00", for trains running now). The Layers menu shows any mix of networks, lines and operators, like "only the Central line and LNER".
+- 📍 **Trains near you.** Share your location and see the nearest trains, where they are heading, and when they reach the next station. (Browsers only share a location with https:// sites.)
 - ⚡ **Fast and light.** One Server-Sent Events stream with one-second deltas, gzip throughout, and batched track geometry. Trains survive server restarts.
 - 📦 **Zero runtime dependencies.** Node runs the TypeScript sources directly. `docker compose up` and you're live.
-- 📱 **Works on phones**, with a bottom sheet that folds away when you move the map.
+- 📱 **Made for phones too.** Search at the top, a sheet that peeks with the essentials and swipes up for the rest, and a tap that asks which train you meant when several are close together.
 - 🌙 **Light and dark**, following the system setting, map included.
 
 ## 📸 Screenshots
@@ -49,8 +50,8 @@ Trains glide along the real track, each with its whole route, next stop, delay a
     <td width="50%"><img src="docs/screenshots/london.jpg" alt="Central London with Tube, Overground, Elizabeth line, DLR and National Rail trains"><br><sub><b>London</b>: Tube trains in line colours, National Rail by punctuality, headcodes when zoomed in.</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/lines.jpg" alt="The Lines panel: a badge for every operator and TfL line, with today's disruptions"><br><sub><b>Pick lines and operators</b>, and see today's closures and delays.</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/mobile.jpg" alt="A GWR train on a phone: speed and next stop beside it on the map, its stops in the sheet below" width="56%"><br><sub><b>On a phone.</b> The sheet folds away when you move the map.</sub></td>
+    <td width="50%"><img src="docs/screenshots/lines.jpg" alt="The Layers menu: networks, operators and TfL lines with how many trains each has on the map"><br><sub><b>Layers</b>: pick networks, operators and lines, and see today's closures and delays.</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/mobile.jpg" alt="A train on a phone: its route on the map, and its next stop, time and speed in the sheet below" width="56%"><br><sub><b>On a phone.</b> The sheet peeks with the essentials; swipe it up for every stop.</sub></td>
   </tr>
   <tr>
     <td colspan="2"><img src="docs/screenshots/dark.jpg" alt="Every train in Great Britain on the dark map"><br><sub><b>Dark mode</b>, when the system is set to it.</sub></td>
