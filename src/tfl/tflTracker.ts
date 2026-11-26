@@ -17,6 +17,7 @@ import type { FeedStatus } from '../feeds/feed.ts';
 import type { LocationIndex, StationTable } from '../engine/locations.ts';
 import type { PathService } from '../engine/paths.ts';
 import type { TrainSource } from '../engine/source.ts';
+import { tflRates } from '../engine/motion.ts';
 import { distanceM, lineLengthM, type LonLat } from '../engine/track.ts';
 import type { StopDetail, TrainDetails } from '../engine/trainDetails.ts';
 import type { TrainChanges, TrainView } from '../engine/trainStore.ts';
@@ -493,6 +494,8 @@ export class TflTracker implements TrainSource {
           to: nextPlace,
           departedAt: now - elapsedS * 1000,
           runMs: runS * 1000,
+          // Timed from one station to the next, stopping at both.
+          motion: { startsStopped: true, endsStopped: true, ...tflRates(line.mode) },
           // Average over the section, including speeding up and slowing down.
           speedKmh: Math.round((lengthM / runS) * 3.6),
         };

@@ -278,10 +278,57 @@ function along(path, f) {
   return { pos: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], bearing: bearingOf(a, b) };
 }
 
-const progressOf = (t, now) => Math.min(1, Math.max(0, (now - t.departedAt) / t.runMs));
+/** A moving train's section: its track (null until loaded) and length in metres, along it or straight across. */
+function sectionOf(t) {
+  const path = trackPath(t.from.key, t.to.key, t.line);
+  return { path, lengthM: path ? path.cum[path.cum.length - 1] : metres([t.from.lon, t.from.lat], [t.to.lon, t.to.lat]) };
+}
 
-/** Where a train is now, and which way it faces (null until it has moved). */
+/**
+ * How far along its section of `lengthM` metres a moving train is (0–1), and
+ * how fast it is going there (m/s): speeding up, running, braking and, when
+ * its report is late, easing toward the end (motion.js). Null speed for a
+ * train the server gives no motion for: drawn at one speed.
+ */
+function progressOf(t, now, lengthM) {
+  const elapsedMs = now - t.departedAt;
+  if (!t.motion || !(lengthM > 0) || !(t.runMs > 0)) return { f: Math.min(1, Math.max(0, elapsedMs / t.runMs)), v: null };
+  const { s, v } = TrainMotion.at(TrainMotion.plan(lengthM, t.runMs / 1000, t.motion), elapsedMs / 1000);
+  return { f: Math.min(1, Math.max(0, s / lengthM)), v };
+}
+
+// A new report can put a train somewhere else than it was drawn (it ran
+// faster or slower than planned): it slides there over this long, unless
+// it is so far that it should just appear there.
+const BLEND_MS = 1500;
+const BLEND_MAX_M = 5000;
+// Train id -> { from: [lon, lat], start: ms } while sliding.
+const blends = new Map();
+
+/** Starts a train sliding from where it was drawn under its old report to where the new one puts it. */
+function startBlend(old, t, now) {
+  const from = locate(old, now).pos;
+  const d = metres(from, place(t, now).pos);
+  if (d > 1 && d < BLEND_MAX_M) blends.set(t.id, { from, start: now });
+  else blends.delete(t.id);
+}
+
+/** Where a train is now, and which way it faces (null until it has moved), sliding after a report moved it. */
 function locate(t, now) {
+  const here = place(t, now);
+  const b = blends.get(t.id);
+  if (!b) return here;
+  const k = (now - b.start) / BLEND_MS;
+  if (k < 0 || k >= 1) {
+    blends.delete(t.id);
+    return here;
+  }
+  const e = k * k * (3 - 2 * k);
+  return { ...here, pos: [b.from[0] + (here.pos[0] - b.from[0]) * e, b.from[1] + (here.pos[1] - b.from[1]) * e] };
+}
+
+/** Where a train's latest report puts it now, and which way it faces. */
+function place(t, now) {
   if (t.state !== 'moving' || !t.to) {
     let bearing = headings.get(t.id) ?? null;
     // Not seen moving yet: face along the track to where it goes next.
@@ -291,8 +338,8 @@ function locate(t, now) {
     }
     return { pos: [t.from.lon, t.from.lat], bearing };
   }
-  const f = progressOf(t, now);
-  const path = trackPath(t.from.key, t.to.key, t.line);
+  const { path, lengthM } = sectionOf(t);
+  const { f } = progressOf(t, now, lengthM);
   const here = path
     ? along(path, f)
     : {
@@ -351,7 +398,11 @@ function titleHtml(t) {
 
 // ---- Units ----
 
-const fmtSpeed = (kmh) => (speedUnit === 'mph' ? `${Math.round(kmh / KMH_PER_MPH)} mph` : `${Math.round(kmh)} km/h`);
+/** A speed in the chosen unit, to the nearest `step` of it. */
+const fmtSpeed = (kmh, step = 1) => {
+  const round = (x) => Math.round(x / step) * step;
+  return speedUnit === 'mph' ? `${round(kmh / KMH_PER_MPH)} mph` : `${round(kmh)} km/h`;
+};
 const NEAR_METRES = () => (speedUnit === 'mph' ? 2 * 1609.344 : 3000);
 const NEAR_LABEL = () => (speedUnit === 'mph' ? '2 miles' : '3 km');
 function fmtDistance(m) {
@@ -359,12 +410,24 @@ function fmtDistance(m) {
   return m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`;
 }
 
-// No public feed gives real speeds (no GPS), so the figure is an average over
-// the section; the tooltip says how it was worked out.
-function speedOf(t) {
+// No public feed gives real speeds (no GPS), so the figure is worked out:
+// from the run drawn on the map (speeding up, running, braking) where the
+// server gives one, else an average over the section. The tooltip says how.
+function speedOf(t, now) {
   if (t.state !== 'moving') return null;
   const measured = t.measuredKmh ? `Measured ${fmtSpeed(t.measuredKmh)} over ${t.measuredSection}, from actual report times.` : '';
   const top = t.topKmh ? `Never shown above its top speed, ${fmtSpeed(t.topKmh)}.` : '';
+  // Past its time with no report yet, its speed is anyone's guess: say nothing
+  // rather than show it easing to a halt on the map's account.
+  if (t.motion && now > t.departedAt + t.runMs) return null;
+  // Only for a section whose average the server found believable.
+  const v = t.speedKmh && t.motion && now !== undefined ? progressOf(t, now, sectionOf(t).lengthM).v : null;
+  if (v !== null) {
+    const kmh = Math.min(v * 3.6, t.topKmh ?? Infinity);
+    const from = t.mode ? 'TfL arrival predictions' : 'its scheduled running time';
+    const how = `Modelled from ${from}, speeding up and braking at typical rates; ${fmtSpeed(t.speedKmh)} on average over this section.`;
+    return { text: `≈ ${fmtSpeed(kmh, 5)}`, tip: [how, measured, top].filter(Boolean).join(' ') };
+  }
   if (t.speedKmh) {
     const how = t.mode ? 'Average over this section, from TfL arrival predictions.' : 'Average over this section, from its scheduled running time.';
     return { text: `≈ ${fmtSpeed(t.speedKmh)}`, tip: [how, measured, top].filter(Boolean).join(' ') };
@@ -521,7 +584,7 @@ function nextHtml(t, d, now) {
   const next = d?.next?.name ?? t.to?.name;
   if (!next) return '';
   const exp = d?.next && expectedOf(d.next, t.delayMin);
-  const speed = speedOf(t);
+  const speed = speedOf(t, now);
   const late = !t.mode && t.delayMin > 0;
   return `<span class="mut">Next</span> <b>${escapeHtml(next)}</b>`
     + (exp ? ` <span class="mut">·</span> <span class="${late ? 'late' : 'soon'}">${untilLabel(exp, now)}</span>` : '')
@@ -672,7 +735,8 @@ function drawRouteLine(now) {
   // track the train is drawn on; cut it at the train.
   const section = t.state === 'moving' && t.to ? trackPath(t.from.key, t.to.key, t.line) : null;
   if (section && ahead.length > 1 && metres(section.coords[0], ahead[0]) < 50) {
-    const [covered, rest] = splitLine(ahead, progressOf(t, now) * section.cum[section.cum.length - 1]);
+    const lengthM = section.cum[section.cum.length - 1];
+    const [covered, rest] = splitLine(ahead, progressOf(t, now, lengthM).f * lengthM);
     behind = behind.length ? [...behind, ...covered.slice(1)] : covered;
     ahead = rest;
   }
@@ -725,7 +789,7 @@ function calloutHtml(t, d, now) {
   if (isNarrow()) return `<b>${escapeHtml(t.mode ? badgeOf(t).code : t.headcode)}</b>`;
   if (t.state === 'terminated') return `<b>Terminated</b><span>${escapeHtml(t.from.name)}</span>`;
   if (t.state === 'stopped') return `<b>Standing</b><span>${escapeHtml((d?.current ?? d?.previous)?.name ?? t.from.name)}</span>${loadHtml(d?.load)}`;
-  const speed = speedOf(t);
+  const speed = speedOf(t, now);
   const next = d?.next?.name ?? t.to?.name;
   const exp = d?.next && expectedOf(d.next, t.delayMin);
   const when = exp ? untilLabel(exp, now) : '';
@@ -1145,6 +1209,7 @@ function connect() {
     haveSnapshot = true;
     setClock(d.serverTime);
     trains.clear();
+    blends.clear();
     for (const t of d.trains) trains.set(t.id, t);
     for (const id of headings.keys()) if (!trains.has(id)) headings.delete(id);
     applyStatus(d.status);
@@ -1156,8 +1221,14 @@ function connect() {
     for (const id of d.removals) {
       trains.delete(id);
       headings.delete(id);
+      blends.delete(id);
     }
-    for (const t of d.upserts) trains.set(t.id, t);
+    const now = serverNow();
+    for (const t of d.upserts) {
+      const old = trains.get(t.id);
+      if (old && visible(old)) startBlend(old, t, now);
+      trains.set(t.id, t);
+    }
     if (!selectedId) return;
     const sel = trains.get(selectedId);
     if (!sel) clearSelection();
@@ -1935,7 +2006,7 @@ function renderNearby() {
     else if (t.state === 'stopped') where = `At ${t.from.name}`;
     else {
       const m = minutesUntil(t.departedAt + t.runMs, now);
-      const speed = speedOf(t);
+      const speed = speedOf(t, now);
       where = m ? `${t.to.name} in ${m} min` : `Reaching ${t.to.name}`;
       if (speed && t.freight) where += ` · ${speed.text}`;
     }

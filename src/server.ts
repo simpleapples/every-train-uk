@@ -12,6 +12,7 @@ import type { TrainSource } from './engine/source.ts';
 import { lineLengthM, TrackNetwork, type TrackJson } from './engine/track.ts';
 import { searchByStation } from './engine/stationSearch.ts';
 import { describeTrain } from './engine/trainDetails.ts';
+import { RunTimes, type RunTimesState } from './engine/runTimes.ts';
 import { type OperatorNameFn, type StoreState, TrainStore } from './engine/trainStore.ts';
 import { DemoFeed } from './feeds/demoFeed.ts';
 import { OPERATORS } from './feeds/demoNetwork.ts';
@@ -34,6 +35,8 @@ const feedKind = env.FEED ?? 'demo';
 // restart (or a new container on the same volume) carries on where it was.
 const stateDir = resolve(env.STATE_DIR ?? fileURLToPath(new URL('../state', import.meta.url)));
 const SAVE_EVERY_MS = 30_000;
+// Section run times change slowly and the file is larger.
+const SAVE_RUN_TIMES_EVERY_MS = 5 * 60_000;
 
 function loadJson<T>(rel: string, hint: string): T {
   try {
@@ -111,7 +114,12 @@ const tflFile = new URL('../data/tfl.json', import.meta.url);
 const tflOn = env.TFL !== 'off' && existsSync(tflFile);
 // Overground, Elizabeth line and some Tube trains also report to TRUST; show
 // each train once, from TfL.
-const store = new TrainStore(locations, operatorName, trackDistance, tflOn ? TFL_RUN_TOCS : new Set());
+// Live mode records how long trains take between reporting points (demo
+// trains run to made-up times, so they would only spoil the record).
+const runTimes = creds ? new RunTimes() : null;
+const store = new TrainStore(locations, operatorName, trackDistance, tflOn ? TFL_RUN_TOCS : new Set(), runTimes);
+// The demo plans its own trains: where they stop and where they run through.
+if (feed.plannedStops) store.setPlannedStops(feed.plannedStops.bind(feed));
 
 const sources: TrainSource[] = [];
 // One path service per TfL line, each on that line's own track.
@@ -142,6 +150,7 @@ if (tflOn) {
 let timetable: Timetable | null = null;
 let plannedStops: ((id: string) => PlannedStop[] | undefined) | undefined = feed.plannedStops?.bind(feed);
 const stateFile = join(stateDir, 'trains.json');
+const runTimesFile = join(stateDir, 'runtimes.json');
 // Short-notice schedules (VSTP): applied to each day's timetable as it loads,
 // and kept across restarts until they have run.
 const vstpFile = join(stateDir, 'vstp.json');
@@ -151,6 +160,9 @@ const writeState = (file: string, data: unknown) => {
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(`${file}.part`, JSON.stringify(data));
   renameSync(`${file}.part`, file);
+};
+const saveRunTimes = () => {
+  if (runTimes?.dirty) writeState(runTimesFile, runTimes.exportState(Date.now()));
 };
 const saveState = () => {
   writeState(stateFile, store.exportState(Date.now()));
@@ -171,6 +183,17 @@ if (creds) {
   setInterval(() => {
     try { saveState(); } catch (err) { console.warn(`Could not save trains: ${(err as Error).message}`); }
   }, SAVE_EVERY_MS);
+  if (runTimes && existsSync(runTimesFile)) {
+    try {
+      const n = runTimes.importState(JSON.parse(readFileSync(runTimesFile, 'utf8')) as RunTimesState);
+      console.log(`Restored run times for ${n} sections`);
+    } catch (err) {
+      console.warn(`Could not restore run times: ${(err as Error).message}`);
+    }
+  }
+  setInterval(() => {
+    try { saveRunTimes(); } catch (err) { console.warn(`Could not save run times: ${(err as Error).message}`); }
+  }, SAVE_RUN_TIMES_EVERY_MS);
   if (existsSync(vstpFile)) {
     try { vstp = JSON.parse(readFileSync(vstpFile, 'utf8')) as VstpSchedule[]; } catch { /* start afresh */ }
   }
@@ -218,6 +241,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     if (creds) {
       try { saveState(); } catch { /* best effort on the way out */ }
+      try { saveRunTimes(); } catch { /* best effort on the way out */ }
     }
     app.close();
     process.exit(0);

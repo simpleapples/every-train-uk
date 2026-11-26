@@ -15,6 +15,11 @@ export interface PlannedStop {
   call: boolean;
   arr?: number;
   dep?: number;
+  /**
+   * Engineering, pathing and performance allowances: time the timetable pads
+   * into the run from here to the next location, beyond what the train needs.
+   */
+  allowanceMs?: number;
 }
 
 export interface Feed {

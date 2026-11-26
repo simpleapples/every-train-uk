@@ -43,11 +43,15 @@ interface Schedule {
   /** STP_RANK of the schedule kept, so a VSTP overlay can tell whether it wins. */
   rank: number;
   service?: ServiceCodes;
-  /** Per location, STRIDE ints: key index, arrival, departure, pass (half-minutes after the date's midnight, -1 if none), calls (1/0). */
+  /**
+   * Per location, STRIDE ints: key index, arrival, departure, pass
+   * (half-minutes after the date's midnight, -1 if none), calls (1/0), and
+   * the allowances timed into the run on to the next location (half-minutes).
+   */
   stops: Int32Array;
 }
 
-const STRIDE = 5;
+const STRIDE = 6;
 const NONE = -1;
 // Overlays and new short-term schedules replace the permanent one for a day;
 // a cancellation removes it.
@@ -64,6 +68,13 @@ interface CifLocation {
   pass?: string | null;
   public_arrival?: string | null;
   public_departure?: string | null;
+  // Time padded into the run from here to the next location: minutes, "H"
+  // for a half ("1H" is 1½). Checked against the extract: a section's
+  // running time less the allowance at its start matches the same section
+  // run without one.
+  engineering_allowance?: string | null;
+  pathing_allowance?: string | null;
+  performance_allowance?: string | null;
 }
 
 interface CifSchedule {
@@ -110,6 +121,9 @@ export interface VstpSchedule {
       scheduled_pass_time?: string | null;
       public_arrival_time?: string | null;
       public_departure_time?: string | null;
+      CIF_engineering_allowance?: string | null;
+      CIF_pathing_allowance?: string | null;
+      CIF_performance_allowance?: string | null;
       location?: { tiploc?: { tiploc_id?: string } };
     }>;
   }>;
@@ -282,6 +296,7 @@ export class Timetable implements ScheduleLookup {
         call: s.stops[i + 4] === 1,
         arr: arr === NONE ? undefined : londonTime(s.date, arr),
         dep: dep !== NONE ? londonTime(s.date, dep) : pass !== NONE ? londonTime(s.date, pass) : undefined,
+        ...(s.stops[i + 5] > 0 && { allowanceMs: s.stops[i + 5] * 30_000 }),
       });
     }
     return out;
@@ -342,7 +357,8 @@ export class Timetable implements ScheduleLookup {
       const calls = hasPublic
         ? isPublic(l.public_arrival) || isPublic(l.public_departure)
         : pass === NONE && (arr !== NONE || dep !== NONE);
-      out.set([this.#keyOf(this.#stanoxOf.get(tiploc) ?? tiploc), arr, dep, pass, calls ? 1 : 0], i * STRIDE);
+      const allowance = parseAllowance(l.engineering_allowance) + parseAllowance(l.pathing_allowance) + parseAllowance(l.performance_allowance);
+      out.set([this.#keyOf(this.#stanoxOf.get(tiploc) ?? tiploc), arr, dep, pass, calls ? 1 : 0, allowance], i * STRIDE);
     });
     return out;
   }
@@ -362,6 +378,12 @@ function parseTime(v: string | null | undefined): number {
   const m = Number(v.slice(2, 4));
   if (!Number.isFinite(h) || !Number.isFinite(m)) return NONE;
   return (h * 60 + m) * 2 + (v[4] === 'H' ? 1 : 0);
+}
+
+/** An allowance ("2", "H", "1H", blank) -> half-minutes. */
+function parseAllowance(v: string | null | undefined): number {
+  const m = /^(\d*)(H?)$/.exec(v?.trim() ?? '');
+  return m ? Number(m[1] || 0) * 2 + (m[2] ? 1 : 0) : 0;
 }
 
 function lastTime(stops: Int32Array): number {
@@ -415,6 +437,9 @@ function fromVstp(v: VstpSchedule): CifSchedule {
         pass: vstpTime(l.scheduled_pass_time),
         public_arrival: vstpTime(l.public_arrival_time),
         public_departure: vstpTime(l.public_departure_time),
+        engineering_allowance: l.CIF_engineering_allowance,
+        pathing_allowance: l.CIF_pathing_allowance,
+        performance_allowance: l.CIF_performance_allowance,
       })),
     },
   };
