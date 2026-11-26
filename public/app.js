@@ -28,6 +28,9 @@ let detailStamp = null; // which train state `detail` was fetched for
 let pendingFit = false; // zoom to the selected train's route when its detail arrives
 let following = false; // keep the selected train centred
 let allStops = false; // the whole stop list, not just around the train
+// Same line: the other trains on the selected train's line (TfL) or route (National Rail).
+let peersOn = false;
+let peerIds = new Set();
 let lastStatus = null;
 let streamOk = false; // false while the SSE connection to our server is down
 let haveSnapshot = false; // trains have arrived at least once
@@ -146,6 +149,8 @@ const TFL_LINE_NAMES = {
   'hammersmith-city': 'Hammersmith & City', 'waterloo-city': 'Waterloo & City', elizabeth: 'Elizabeth line', dlr: 'DLR',
 };
 const lineName = (line) => TFL_LINE_NAMES[line] ?? `${line[0].toUpperCase()}${line.slice(1)}`;
+/** "the Bakerloo line", "the Elizabeth line", "the DLR". */
+const theLine = (line) => { const n = lineName(line); return `the ${/line$|^DLR$/.test(n) ? n : `${n} line`}`; };
 // Train operators by name, with a short code and a colour for the badge.
 const OPERATOR_BADGES = {
   LNER: ['LNER', '#CE0E2D'], 'Great Northern': ['GN', '#5C2D91'], 'Avanti West Coast': ['AWC', '#004354'], GWR: ['GWR', '#0A493E'],
@@ -458,7 +463,7 @@ function metaHtml(t, s) {
   const art = s.kind ? `<svg class="mini-art" viewBox="0 0 112 26" style="color:${escapeHtml(color)}" aria-hidden="true"><g fill="currentColor">${trainArt(s, t.freight)}</g></svg>` : '';
   const parts = [];
   if (s.stock) parts.push(`<span data-tip="${escapeHtml(s.stock)}">${escapeHtml(shortStock(s.stock))}</span>`);
-  if (s.maxMph) parts.push(`<span>Top speed ${fmtSpeed(s.maxMph * KMH_PER_MPH)}</span>`);
+  if (s.maxMph) parts.push(`<span data-tip="Timetabled top speed">Max ${fmtSpeed(s.maxMph * KMH_PER_MPH)}</span>`);
   if (s.tonnes) parts.push(`<span>${s.tonnes.toLocaleString('en-GB')} t</span>`);
   const facilities = facilitiesHtml(s.features);
   return art + parts.join('<span class="m-sep">·</span>') + (facilities ? `<span class="m-fac">${facilities}</span>` : '');
@@ -546,6 +551,9 @@ function select(id) {
   detail = null;
   detailStamp = null;
   allStops = false;
+  const keepPeers = peersOn && peerIds.has(id);
+  peersOn = false;
+  peerIds = new Set();
   // Zoom to the whole route once its detail arrives, even if a newer request
   // for the same train replaces the first one.
   pendingFit = true;
@@ -557,7 +565,7 @@ function select(id) {
   setHtml($('d-meta'), '');
   openSheet('detail');
   renderDetailHead(t);
-  setFocusStyle();
+  setPeers(keepPeers, false);
   remember(t);
   loadDetail(id);
   render();
@@ -570,7 +578,7 @@ function clearSelection() {
   pendingFit = false;
   setFollow(false);
   setRoute(null);
-  setFocusStyle();
+  setPeers(false, false);
   openSheet(locating && me ? 'nearby' : null);
 }
 
@@ -578,9 +586,10 @@ function clearSelection() {
 function setFocusStyle() {
   if (!map.getLayer('trains')) return;
   const focused = Boolean(selectedId);
-  const dim = (v) => (focused ? ['case', ['==', ['get', 'selected'], true], 1, v] : 1);
+  const dim = (v) => (focused ? ['case', ['any', ['==', ['get', 'selected'], true], ['==', ['get', 'peer'], true]], 1, v] : 1);
   map.setPaintProperty('trains', 'icon-opacity', dim(0.15));
-  map.setPaintProperty('train-labels', 'text-opacity', dim(0));
+  // Headcodes: the peers' only; the selected train's is in its callout.
+  map.setPaintProperty('train-labels', 'text-opacity', focused ? ['case', ['==', ['get', 'selected'], true], 0, ['==', ['get', 'peer'], true], 1, 0] : 1);
   map.setPaintProperty('openrailwaymap', 'raster-opacity', focused ? THEME.railFocused : THEME.rail['raster-opacity']);
 }
 
@@ -613,7 +622,7 @@ async function loadDetail(id) {
   renderDetail(d);
   if (pendingFit) {
     pendingFit = false;
-    fitRoute();
+    focusTrain();
   }
 }
 
@@ -683,6 +692,36 @@ function drawRouteLine(now) {
   source.setData({ type: 'FeatureCollection', features });
 }
 
+/** The first `m` metres of a line. */
+function stretch(coords, m) {
+  const out = [];
+  let done = 0;
+  for (let i = 0; i < coords.length && done < m; i++) {
+    if (i) done += metres(coords[i - 1], coords[i]);
+    out.push(coords[i]);
+  }
+  return out;
+}
+
+/**
+ * A picked train: close in on it, with a little of the line behind and a
+ * stretch ahead, rather than zooming out to its whole journey (Full route
+ * does that). Already zoomed in, the map only moves to bring it into view.
+ */
+function focusTrain() {
+  const t = selectedId && trains.get(selectedId);
+  if (!t || !detail) return;
+  setFollow(false);
+  const pos = positionOf(t, serverNow());
+  if (map.getZoom() >= 11) {
+    map.easeTo({ center: pos, padding: mapPadding(), duration: motion(600) });
+    return;
+  }
+  const near = [pos, ...stretch(detail.pathAhead, 15_000), ...stretch([...detail.pathBehind].reverse(), 5_000)];
+  const bounds = near.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(pos, pos));
+  map.fitBounds(bounds, { padding: mapPadding(), maxZoom: 13, duration: motion(800) });
+}
+
 function fitRoute() {
   if (!detail) return;
   const coords = [...detail.pathBehind, ...detail.pathAhead];
@@ -695,6 +734,8 @@ function fitRoute() {
 
 function renderDetailHead(t) {
   setHtml($('d-title'), titleHtml(t));
+  $('d-peers-label').textContent = t.mode ? 'Same line' : 'Same route';
+  $('d-peers').title = t.mode ? `Every train on ${theLine(t.line)}` : 'Trains of the same operator between the same places';
   const route = $('d-route');
   if (setHtml(route, escapeHtml(routeLabel(t)))) {
     route.scrollLeft = 0;
@@ -712,6 +753,70 @@ function renderLive(t, now) {
   const d = detailFor(t);
   const changed = setHtml($('d-next'), nextHtml(t, d, now)) | setHtml($('d-extra'), extraHtml(t, d, now));
   if (changed) updatePeek();
+}
+
+// ---- Same line: the other trains on its line or route ----
+
+let lastPeers = 0;
+
+/**
+ * Trains on the same TfL line; on National Rail, the same operator between
+ * the same two places, either way (or sharing one end, if that finds few).
+ */
+function peersOf(t) {
+  const ids = new Set([t.id]);
+  const others = [...trains.values()].filter((o) => o.id !== t.id && visible(o));
+  if (t.mode) {
+    for (const o of others) if (o.line === t.line) ids.add(o.id);
+    return ids;
+  }
+  const ends = new Set([t.origin, t.destination].filter(Boolean));
+  const sameOp = others.filter((o) => !o.mode && o.operator === t.operator);
+  for (const o of sameOp) if (ends.size === 2 && ends.has(o.origin) && ends.has(o.destination)) ids.add(o.id);
+  if (ids.size < 3) for (const o of sameOp) if (ends.has(o.origin) || ends.has(o.destination)) ids.add(o.id);
+  return ids;
+}
+
+/** Same line on or off; on, with `fit`, the map takes in all of them. */
+function setPeers(on, fit) {
+  const t = selectedId && trains.get(selectedId);
+  peersOn = Boolean(on && t);
+  peerIds = peersOn ? peersOf(t) : new Set();
+  lastPeers = serverNow();
+  $('d-peers').setAttribute('aria-pressed', String(peersOn));
+  renderPeers(t);
+  setFocusStyle();
+  if (peersOn && fit) {
+    setFollow(false);
+    const now = serverNow();
+    const pts = [...peerIds].map((id) => trains.get(id)).filter(Boolean).map((o) => positionOf(o, now));
+    if (pts.length > 1) {
+      const bounds = pts.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(pts[0], pts[0]));
+      map.fitBounds(bounds, { padding: mapPadding(), maxZoom: 13, duration: motion(800) });
+    }
+  }
+}
+
+/** The list under the train's buttons: the others, nearest first. */
+function renderPeers(t) {
+  const el = $('d-peers-list');
+  if (!peersOn || !t) {
+    el.hidden = true;
+    setHtml(el, '');
+    return;
+  }
+  const now = serverNow();
+  const here = positionOf(t, now);
+  const others = [...peerIds].filter((id) => id !== t.id).map((id) => trains.get(id)).filter(Boolean)
+    .map((o) => ({ o, d: metres(here, positionOf(o, now)) })).sort((a, b) => a.d - b.d);
+  const what = t.mode ? `on ${theLine(t.line)}` : `${badgeOf(t).name}, same route`;
+  const head = `<div class="lsec-h">${others.length ? `${others.length + 1} trains ${escapeHtml(what)}` : `No other trains ${escapeHtml(what)} right now`}</div>`;
+  const rows = others.slice(0, 10).map(({ o, d }) => `<div class="n-row" data-id="${escapeHtml(o.id)}" role="button" tabindex="0">${badgeHtml(badgeOf(o), 'fixed')}`
+    + `<span class="n-main"><span class="n-title">${escapeHtml(shortText(o))}</span><span class="n-where">${escapeHtml(whereLabel(o))}</span></span>`
+    + `<span class="n-dist">${fmtDistance(d)}</span></div>`).join('');
+  const more = others.length > 10 ? `<p class="note">And ${others.length - 10} more, bright on the map.</p>` : '';
+  el.hidden = false;
+  if (setHtml(el, head + rows + more)) updatePeek();
 }
 
 // ---- Callout: beside the selected train on the map ----
@@ -809,20 +914,11 @@ function renderCalls(d, t, now) {
     } else {
       const planned = timeOf(s, 'planned');
       const actual = timeOf(s, 'actual');
+      // Left: the timetable. Right: minutes late or early against it, as
+      // reported where it has been; still to come, only when it is late.
       left = hhmm(planned);
-      if (actual) {
-        right = hhmm(actual);
-        if (planned && actual - planned >= 60_000) rclass = 'late';
-      } else if (i === next) {
-        const exp = expectedOf(s, t.delayMin);
-        if (exp) {
-          right = untilLabel(exp, now);
-          rclass = t.delayMin > 0 ? 'late' : 'soon';
-        }
-      } else if (s.status === 'upcoming' && planned && t.delayMin > 0) {
-        right = hhmm(expectedOf(s, t.delayMin));
-        rclass = 'late';
-      }
+      if (actual && planned) [right, rclass] = devLabel(Math.round((actual - planned) / 60_000));
+      else if (s.status === 'upcoming' && planned && t.delayMin > 0) [right, rclass] = devLabel(t.delayMin);
     }
     const cls = [s.status, i === 0 && 'first', i === stops.length - 1 && 'last', i === here && 'here', i === next && 'next'].filter(Boolean).join(' ');
     items.push(`<li class="call ${escapeHtml(cls)}">
@@ -888,18 +984,62 @@ function searchTrains(query) {
   return scored.slice(0, 8).map((s) => s.t);
 }
 
-/** The trains to list for a query: local matches, then trains calling at a station. */
+let resultSections = []; // [{ title, items }], as listed; `results` is the same items in one list
+
+/**
+ * What a query finds, in sections. A station gives a departure board: its
+ * trains in the order they are due, then a few that have just gone. Trains
+ * found by headcode, line, operator or destination come first when the
+ * query is a headcode, after the boards otherwise.
+ */
 function searchResults(query) {
-  // With a time in it, the query is a station and a time.
-  const local = TIME_IN_QUERY.test(query) ? [] : searchTrains(query).map((t) => ({ t, sub: whereLabel(t) }));
-  const seen = new Set(local.map((r) => r.t.id));
-  const calling = stationHits.flatMap((h) => {
-    const t = trains.get(h.id);
-    if (!t || seen.has(h.id) || !visible(t)) return [];
-    seen.add(h.id);
-    return [{ t, sub: `${h.kind === 'dep' ? 'Departs' : 'Arrives'} ${h.station} ${hhmm(h.at)}` }];
-  });
-  return [...local, ...calling].slice(0, 8);
+  const q = query.trim().toLowerCase();
+  const timed = TIME_IN_QUERY.test(query);
+  const calls = stationHits.map((hit) => ({ t: trains.get(hit.id), hit })).filter((r) => r.t && visible(r.t));
+  const onBoard = new Set(calls.map((r) => r.t.id));
+  const local = timed ? [] : searchTrains(query).filter((t) => !onBoard.has(t.id)).map((t) => ({ t }));
+  const boards = new Map();
+  for (const r of calls) boards.set(r.hit.station, [...(boards.get(r.hit.station) ?? []), r]);
+  // The station named just as typed first, then in the server's order (soonest train first).
+  const plain = q.replace(TIME_IN_QUERY, '').trim();
+  const stations = [...boards]
+    .sort(([a], [b]) => Number(b.toLowerCase() === plain) - Number(a.toLowerCase() === plain))
+    .slice(0, 3)
+    .map(([name, items]) => ({ title: name, items: items.slice(0, 8) }));
+  const found = local.length ? [{ title: stations.length ? 'Trains' : '', items: local.slice(0, stations.length ? 4 : 8) }] : [];
+  const headcode = local.some(({ t }) => t.headcode?.toLowerCase() === q);
+  resultSections = headcode ? [...found, ...stations] : [...stations, ...found];
+  return resultSections.flatMap((sec) => sec.items);
+}
+
+/** Against the timetable: "+3 min" late, "−1 min" early, or "On time". */
+function devLabel(min) {
+  if (min > 0) return [`+${min} min`, 'late'];
+  if (min < 0) return [`−${-min} min`, 'early'];
+  return ['On time', 'ontime'];
+}
+
+/**
+ * A row of a station's board: the timetabled time (TfL, which has no
+ * timetable: minutes away), where the train is going, when it leaves, and how
+ * late it is running.
+ */
+function boardRow({ t, hit }, i, now) {
+  const tfl = Boolean(t.mode);
+  const mins = Math.round((hit.expected - now) / 60_000);
+  const arr = hit.kind === 'arr';
+  let status;
+  if (hit.state === 'here') status = arr ? 'Arrived, at the platform' : 'At the platform';
+  else if (hit.state === 'gone') status = `${arr ? 'Arrived' : 'Left'} ${-mins > 0 ? `${-mins} min ago` : 'just now'}`;
+  else status = mins <= 0 ? 'Due now' : `${arr ? 'Arrives' : 'Leaves'} in ${mins} min`;
+  const time = tfl ? (hit.state !== 'due' ? 'Here' : mins <= 0 ? 'Due' : `${mins} min`) : hhmm(hit.at);
+  const where = arr ? (t.origin ? `From ${t.origin}` : 'Terminates here') : t.destination ? `→ ${t.destination}` : shortText(t);
+  const [dev, devClass] = tfl || t.freight ? ['', ''] : devLabel(t.delayMin);
+  return `<li class="result board ${escapeHtml(hit.state)}" role="option" id="result-${i}" data-id="${escapeHtml(t.id)}" aria-selected="${i === activeResult}">`
+    + `<span class="b-time"><b>${escapeHtml(time)}</b>${tfl ? '' : `<small>${arr ? 'arr' : 'dep'}</small>`}</span>`
+    + `<span class="r-main"><span class="r-title">${badgeHtml(badgeOf(t))}<span class="short-text">${escapeHtml(where)}</span></span>`
+    + `<span class="r-sub">${escapeHtml(tfl ? status : `${status} · ${t.headcode}`)}</span></span>`
+    + `<span class="b-dev ${devClass}">${escapeHtml(dev)}</span></li>`;
 }
 
 function lookUpStations(query) {
@@ -960,7 +1100,10 @@ function renderSearch() {
         : 'No train on the map matches. Try a headcode, a line or operator, or a station.';
     list.innerHTML = `<li class="result empty" role="option" aria-disabled="true">${escapeHtml(empty)}</li>`;
   } else {
-    list.innerHTML = results.map(({ t, sub }, i) => resultRow(t, shortText(t), sub, i)).join('');
+    let i = 0;
+    const now = serverNow();
+    list.innerHTML = resultSections.map((sec) => (sec.title ? `<li class="hint-h" role="presentation">${escapeHtml(sec.title)}</li>` : '')
+      + sec.items.map((r) => (r.hit ? boardRow(r, i++, now) : resultRow(r.t, shortText(r.t), whereLabel(r.t), i++))).join('')).join('');
   }
   $('search-pop').hidden = false;
   input.setAttribute('aria-expanded', 'true');
@@ -1066,6 +1209,7 @@ function render() {
         icon: `train:${colorOf(t)}:${bearing === null ? 'dot' : 'arrow'}`,
         bearing: bearing ?? 0,
         selected: t.id === selectedId,
+        peer: peerIds.has(t.id),
       },
     });
   }
@@ -1084,6 +1228,7 @@ function render() {
   if (!pressing) {
     if (sheetMode === 'nearby' && now - lastNearby > 1000) renderNearby();
     if (layersOpen && now - lastLayers > 2000) renderLayers();
+    if (peersOn && now - lastPeers > 2000) setPeers(true, false);
   }
 }
 
@@ -1687,6 +1832,7 @@ function toggleLine(key) {
 function setSpeedUnit(unit) {
   speedUnit = unit;
   store.set('speedUnit', unit);
+  scale.setUnit(unit === 'mph' ? 'imperial' : 'metric');
   renderLayers();
   if (detail) renderDetail(detail);
   if (sheetMode === 'nearby') renderNearby();
@@ -1973,7 +2119,7 @@ class LocateControl {
 
 // ---- Controls and start-up ----
 
-// Bottom right, from the bottom up: credits, zoom, your location.
+// Bottom right, from the bottom up: credits, scale, zoom, your location.
 map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: [RAIL_ATTRIBUTION, 'Powered by TfL Open Data'] }), 'bottom-right');
 {
   // Start the credits folded behind the ⓘ: open, they run under the other buttons.
@@ -1981,16 +2127,31 @@ map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribut
   el?.classList.remove('maplibregl-compact-show');
   el?.removeAttribute('open');
 }
+const scale = new maplibregl.ScaleControl({ maxWidth: 90, unit: 'metric' });
+map.addControl(scale, 'bottom-right');
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
 map.addControl(new LocateControl(), 'bottom-right');
 
 railLines = store.get('railLines', true) !== false;
 speedUnit = store.get('speedUnit', 'kmh') === 'mph' ? 'mph' : 'kmh';
+scale.setUnit(speedUnit === 'mph' ? 'imperial' : 'metric');
 const savedNetworks = store.get('networks', null);
 applyFilter(Array.isArray(savedNetworks) ? savedNetworks : NETWORKS, store.get('hiddenLines', []));
 
 $('d-close').addEventListener('click', clearSelection);
 $('d-fit').addEventListener('click', fitRoute);
+$('d-peers').addEventListener('click', () => setPeers(!peersOn, true));
+$('d-peers-list').addEventListener('click', (e) => {
+  const row = e.target.closest('.n-row');
+  if (row) select(row.dataset.id);
+});
+$('d-peers-list').addEventListener('keydown', (e) => {
+  const row = e.target.closest('.n-row');
+  if (row && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    select(row.dataset.id);
+  }
+});
 $('d-follow').addEventListener('click', () => setFollow(!following));
 
 function closePops() {

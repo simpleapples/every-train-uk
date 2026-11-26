@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { PlannedStop } from '../src/feeds/feed.ts';
-import { parseStationQuery, searchByStation } from '../src/engine/stationSearch.ts';
+import { parseStationQuery, searchByStation, type SearchStop } from '../src/engine/stationSearch.ts';
 import type { TrainView } from '../src/engine/trainStore.ts';
 
 // Thursday 26 November 2026, GMT: London time is UTC.
 const at = (h: number, m: number) => Date.UTC(2026, 10, 26, h, m);
-const view = (id: string) => ({ id }) as TrainView;
-const stop = (name: string, call: boolean, arr?: number, dep?: number): PlannedStop => ({ key: name, name, call, arr, dep });
+const view = (id: string, delayMin = 0) => ({ id, delayMin }) as TrainView;
+const stop = (name: string, call: boolean, arr?: number, dep?: number, extra: Partial<SearchStop> = {}): SearchStop => ({ key: name, name, call, arr, dep, ...extra });
 const trains = [
   { view: view('A'), stops: [stop('London Paddington', true, undefined, at(8, 0)), stop('Reading', false, undefined, at(8, 24)), stop('Bristol Temple Meads', true, at(9, 40))] },
   { view: view('B'), stops: [stop('London Paddington', true, undefined, at(8, 30)), stop('Reading', true, at(8, 52), at(8, 54)), stop('Oxford', true, at(9, 20))] },
@@ -23,11 +22,11 @@ describe('station search', () => {
 
   it('finds the train due at a station nearest the time asked', () => {
     expect(searchByStation('padd 8:00', trains, at(7, 0))).toEqual([
-      { id: 'A', station: 'London Paddington', at: at(8, 0), kind: 'dep' },
-      { id: 'B', station: 'London Paddington', at: at(8, 30), kind: 'dep' },
+      { id: 'A', station: 'London Paddington', at: at(8, 0), kind: 'dep', expected: at(8, 0), state: 'due' },
+      { id: 'B', station: 'London Paddington', at: at(8, 30), kind: 'dep', expected: at(8, 30), state: 'due' },
     ].slice(0, 1));
     expect(searchByStation('Paddington 08:20', trains, at(7, 0)).map((m) => m.id)).toEqual(['B', 'A']);
-    expect(searchByStation('bristol 0940', trains, at(7, 0))).toEqual([{ id: 'A', station: 'Bristol Temple Meads', at: at(9, 40), kind: 'arr' }]);
+    expect(searchByStation('bristol 0940', trains, at(7, 0))).toEqual([{ id: 'A', station: 'Bristol Temple Meads', at: at(9, 40), kind: 'arr', expected: at(9, 40), state: 'due' }]);
   });
 
   it('matches only where the train stops, every word of the name', () => {
@@ -39,6 +38,26 @@ describe('station search', () => {
 
   it('without a time, lists the soonest first', () => {
     expect(searchByStation('paddington', trains, at(8, 10)).map((m) => m.id)).toEqual(['B', 'A']);
+  });
+
+  it('is a departure board without a time: still to come by expected time, then a few that have gone', () => {
+    const board = [
+      // Left Reading already.
+      { view: view('C'), stops: [stop('Reading', true, undefined, at(8, 5), { passed: true }), stop('Oxford', true, at(8, 40))] },
+      // Due at 8:15 but 10 minutes late, so after D.
+      { view: view('E', 10), stops: [stop('Reading', true, at(8, 13), at(8, 15)), stop('Didcot', true, at(8, 30))] },
+      { view: view('D'), stops: [stop('Reading', true, undefined, at(8, 20)), stop('Oxford', true, at(8, 50))] },
+      // Standing at Reading now.
+      { view: view('F'), stops: [stop('Reading', true, at(8, 9), at(8, 11), { here: true }), stop('Oxford', true, at(8, 40))] },
+    ];
+    const r = searchByStation('reading', board, at(8, 10));
+    expect(r.map((m) => [m.id, m.state])).toEqual([['F', 'here'], ['D', 'due'], ['E', 'due'], ['C', 'gone']]);
+    expect(r.find((m) => m.id === 'E')!.expected).toBe(at(8, 25));
+  });
+
+  it('uses a predicted time where there is one (TfL)', () => {
+    const tube = [{ view: view('T'), stops: [stop('Leyton', true, at(8, 4), undefined, { expected: at(8, 4) }), stop('Stratford', true, at(8, 7), undefined, { expected: at(8, 7) })] }];
+    expect(searchByStation('leyton', tube, at(8, 0))).toEqual([{ id: 'T', station: 'Leyton', at: at(8, 4), kind: 'dep', expected: at(8, 4), state: 'due' }]);
   });
 
   it('needs a station, not just a time', () => {

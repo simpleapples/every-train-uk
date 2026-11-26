@@ -67,11 +67,15 @@
             <button id="d-follow" class="btn" type="button" aria-pressed="false">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="5.5"/><circle cx="10" cy="10" r="1.5" fill="currentColor"/><path d="M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3"/></svg>Follow
             </button>
-            <button id="d-fit" class="btn" type="button">
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5V3h4.5M12.5 3H17v4.5M17 12.5V17h-4.5M7.5 17H3v-4.5"/></svg>Whole route
+            <button id="d-fit" class="btn" type="button" title="Zoom out to the whole journey">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5V3h4.5M12.5 3H17v4.5M17 12.5V17h-4.5M7.5 17H3v-4.5"/></svg>Full route
+            </button>
+            <button id="d-peers" class="btn" type="button" aria-pressed="false">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M1.5 10h17"/><circle cx="5" cy="10" r="2" fill="currentColor"/><circle cx="10.5" cy="10" r="2" fill="currentColor"/><circle cx="16" cy="10" r="2" fill="currentColor"/></svg><span id="d-peers-label">Same line</span>
             </button>
           </div>
         </div>
+        <section id="d-peers-list" class="peers" aria-label="Trains on the same line" hidden></section>
         <div id="d-note" class="d-note"></div>
         <ol id="d-calls" class="calls" aria-label="Stops"></ol>
         <button id="d-more" class="link-btn more" type="button" hidden></button>

@@ -10,9 +10,9 @@ import { LocationIndex, type StanoxTable, type StationTable, type TimingPointTab
 import { PathService } from './engine/paths.ts';
 import type { TrainSource } from './engine/source.ts';
 import { lineLengthM, TrackNetwork, type TrackJson } from './engine/track.ts';
-import { searchByStation } from './engine/stationSearch.ts';
+import { searchByStation, type SearchStop } from './engine/stationSearch.ts';
 import { describeTrain } from './engine/trainDetails.ts';
-import { type OperatorNameFn, type StoreState, TrainStore } from './engine/trainStore.ts';
+import { type OperatorNameFn, type StoreState, TrainStore, type TrainView } from './engine/trainStore.ts';
 import { DemoFeed } from './feeds/demoFeed.ts';
 import { OPERATORS } from './feeds/demoNetwork.ts';
 import type { Feed, PlannedStop } from './feeds/feed.ts';
@@ -200,6 +200,13 @@ if (creds) {
   };
 }
 
+/** A rail train's timetabled stops, marking those it has passed: up to where it was last reported. */
+function railSearchStops(view: TrainView): SearchStop[] {
+  const stops = plannedStops?.(view.id) ?? [];
+  const at = stops.findIndex((s) => s.key === view.from.key);
+  return stops.map((s, i) => ({ ...s, passed: at >= 0 && (i < at || (i === at && view.state !== 'stopped')), here: i === at && view.state === 'stopped' }));
+}
+
 const app = createApp({
   feed,
   store,
@@ -207,7 +214,10 @@ const app = createApp({
   publicDir: fileURLToPath(new URL('../public', import.meta.url)),
   describe: (id) => describeTrain(id, store, locations, paths, plannedStops),
   path: (from, to, line) => (line ? tflPaths.get(line) : paths)?.between(from, to) ?? null,
-  search: (q) => searchByStation(q, store.snapshot().map((view) => ({ view, stops: plannedStops?.(view.id) ?? [] })), Date.now()),
+  search: (q) => searchByStation(q, [
+    ...store.snapshot().map((view) => ({ view, stops: railSearchStops(view) })),
+    ...sources.flatMap((s) => (s.searchStops ? s.snapshot().map((view) => ({ view, stops: s.searchStops!(view.id) })) : [])),
+  ], Date.now()),
 });
 
 app.server.listen(port, () => {

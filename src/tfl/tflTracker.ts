@@ -17,6 +17,7 @@ import type { FeedStatus } from '../feeds/feed.ts';
 import type { LocationIndex, StationTable } from '../engine/locations.ts';
 import type { PathService } from '../engine/paths.ts';
 import type { TrainSource } from '../engine/source.ts';
+import type { SearchStop } from '../engine/stationSearch.ts';
 import { distanceM, lineLengthM, type LonLat } from '../engine/track.ts';
 import type { StopDetail, TrainDetails } from '../engine/trainDetails.ts';
 import type { TrainChanges, TrainView } from '../engine/trainStore.ts';
@@ -240,6 +241,19 @@ export class TflTracker implements TrainSource {
       this.#changed.delete(id);
       this.#removed.add(id);
     }
+  }
+
+  /** Its stops for station search: TfL's predicted arrival at each one still to come. */
+  searchStops(trainId: string): SearchStop[] {
+    const train = this.#trains.get(trainId);
+    if (!train) return [];
+    const { view, route, here } = train;
+    const paths = this.#paths(view.line!);
+    return route.map((key, i) => {
+      const expected = train.expected.get(key);
+      const standing = i === here && view.state !== 'moving';
+      return { key, name: paths.place(key)?.name ?? key, call: true, arr: expected, expected, passed: i < here || (i === here && !standing), here: standing };
+    });
   }
 
   describe(trainId: string): TrainDetails | undefined {

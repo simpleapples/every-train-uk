@@ -61,7 +61,7 @@
   --btn-h: 32px;
   /* Where things sit */
   --edge: 12px;
-  --side-w: 340px;
+  --side-w: 360px;
   /* Height of the phone sheet showing above the bottom edge (set by app.js). */
   --sheet-visible: 0px;
 
@@ -226,6 +226,18 @@ button { font: inherit; color: inherit; }
 .hint .r-ic { display: grid; place-items: center; width: 44px; color: var(--text-3); }
 .hint .r-ic svg { width: 18px; height: 18px; }
 .hint .r-title { font-weight: 500; }
+/* A station's departure board: timetabled time, where to, when, how late. */
+.result.board { grid-template-columns: 48px minmax(0, 1fr) auto; }
+.result.board .r-title { display: flex; align-items: center; }
+.result.board .short-text { margin-left: 6px; overflow: hidden; text-overflow: ellipsis; }
+.result.board.gone { opacity: 0.6; }
+.b-time { display: flex; flex-direction: column; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.b-time b { font-size: var(--fs-base); font-weight: 700; color: var(--text); white-space: nowrap; }
+.b-time small { font-size: var(--fs-xs); color: var(--text-3); }
+.b-dev { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.b-dev.late, .c-rt.late { color: var(--warn-text); }
+.b-dev.early, .c-rt.early { color: var(--ok-text); }
+.b-dev.ontime, .c-rt.ontime { color: var(--text-3); font-weight: 500; }
 
 /* ---- Round buttons on the map: Layers ---- */
 
@@ -420,7 +432,7 @@ button { font: inherit; color: inherit; }
   font-size: var(--fs-base);
 }
 .sheet-grip { display: none; }
-.sheet-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px 16px; }
+.sheet-body { position: relative; flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px 16px; }
 
 .d-head { display: flex; align-items: center; gap: 8px; }
 .d-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
@@ -456,7 +468,8 @@ button { font: inherit; color: inherit; }
 .d-next .mut { color: var(--text-3); }
 .soon { color: var(--accent); font-weight: 650; }
 .late { color: var(--warn-text); }
-.d-actions { display: flex; gap: 8px; margin-top: 12px; }
+.d-actions { display: flex; gap: 6px; margin-top: 12px; }
+.d-actions .btn { flex: 1 1 auto; justify-content: center; padding: 0 8px; gap: 5px; }
 .d-extra { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; font-size: var(--fs-sm); color: var(--text-3); }
 .d-note { margin-top: 8px; }
 .note { margin: 0; color: var(--text-3); font-size: var(--fs-sm); line-height: 1.45; }
@@ -487,8 +500,7 @@ button { font: inherit; color: inherit; }
 .call.next .c-name, .call.here .c-name { font-weight: 650; }
 .c-name { padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-rt { font-size: var(--fs-sm); color: var(--text-3); padding-left: 8px; white-space: nowrap; }
-.c-rt.late { color: var(--warn-text); font-weight: 600; }
-.c-rt.soon { color: var(--accent); }
+.c-rt.late, .c-rt.early { font-weight: 600; }
 .c-nopos { width: 13px; height: 13px; margin-left: 6px; vertical-align: -2px; fill: none; stroke: var(--text-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 /* The train: a small marker on the rail between the stop behind it and the next. */
 .call.now { min-height: 18px; }
@@ -506,6 +518,10 @@ button { font: inherit; color: inherit; }
 }
 .c-train svg { width: 12px; height: 12px; }
 .more { margin: 6px 0 0 64px; }
+/* Same line: the other trains on it. */
+.peers { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--border); }
+.peers .lsec-h { padding: 0; }
+.peers .note { margin-top: 6px; }
 
 /* Trains near you */
 .n-head { display: flex; align-items: center; gap: 8px; }
@@ -622,6 +638,7 @@ button { font: inherit; color: inherit; }
 .maplibregl-ctrl-bottom-right .maplibregl-ctrl { margin: 0 var(--edge) 8px 0; }
 .maplibregl-ctrl-bottom-right .maplibregl-ctrl:last-child { margin-bottom: var(--edge); }
 .locate-btn { display: grid !important; place-items: center; color: var(--text-2); }
+.maplibregl-ctrl-scale { background: color-mix(in srgb, var(--bg) 80%, transparent) !important; border-color: var(--text-3) !important; color: var(--text-2) !important; font-size: 10px; }
 .locate-btn svg { width: 18px; height: 18px; }
 .locate-btn[aria-pressed="true"] { color: var(--me); }
 .locate-btn.pending svg { animation: pulse 1s ease-in-out infinite alternate; }
@@ -702,7 +719,7 @@ button { font: inherit; color: inherit; }
   .sheet.full .sheet-body { overflow-y: auto; }
   /* Peeking, the whole sheet drags; swiped up, the top part drags and the rest scrolls. */
   .sheet:not(.full), .peek { touch-action: none; }
-  .d-actions .btn { flex: 1; justify-content: center; }
+  .d-actions .btn { flex: 1; padding: 0 6px; gap: 4px; }
   /* Location and credits ride above the sheet. */
   .maplibregl-ctrl-bottom-right { transform: translateY(calc(-1 * var(--sheet-visible))); }
   body.sheet-full .maplibregl-ctrl-bottom-right { visibility: hidden; }

@@ -1,4 +1,5 @@
 import type { FeedStatus } from '../feeds/feed.ts';
+import type { SearchStop } from './stationSearch.ts';
 import type { TrainDetails } from './trainDetails.ts';
 import type { TrainChanges, TrainView } from './trainStore.ts';
 
@@ -15,4 +16,6 @@ export interface TrainSource {
   drainChanges(): TrainChanges;
   status(): FeedStatus & { trains: number };
   describe(trainId: string): TrainDetails | undefined;
+  /** The train's stops for station search, with predicted times and how far it has got. */
+  searchStops?(trainId: string): SearchStop[];
 }

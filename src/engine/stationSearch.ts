@@ -8,14 +8,29 @@ import type { TrainView } from './trainStore.ts';
 export interface StationMatch {
   id: string;
   station: string;
-  /** Planned time there: departure, or arrival where it ends. */
+  /** Timetabled time there: departure, or arrival where it ends. TfL trains: their predicted arrival. */
   at: number;
   kind: 'dep' | 'arr';
+  /** When it is expected there, lateness allowed for. */
+  expected: number;
+  /** gone: it has called there already; here: standing there now; due: still to come. */
+  state: 'gone' | 'here' | 'due';
+}
+
+/** A stop as search sees it: the timetable's, plus how far the train has got. */
+export interface SearchStop extends PlannedStop {
+  passed?: boolean;
+  here?: boolean;
+  /** A predicted time there (TfL), used instead of timetable plus lateness. */
+  expected?: number;
 }
 
 /** How far from the asked time a train still counts as that train. */
 const NEAR_MINUTES = 20;
-const MAX_RESULTS = 10;
+const MAX_RESULTS = 12;
+const MAX_GONE = 3;
+/** How long a train that has gone stays on a station's board. */
+const GONE_FOR_MS = 20 * 60_000;
 const londonClock = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
 const words = (s: string) => s.toLowerCase().replace(/&/g, ' and ').replace(/['’.]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
@@ -35,7 +50,7 @@ export function parseStationQuery(query: string): { words: string[]; minute?: nu
   return { words: words(rest), minute };
 }
 
-export function searchByStation(query: string, trains: { view: TrainView; stops: PlannedStop[] }[], now: number): StationMatch[] {
+export function searchByStation(query: string, trains: { view: TrainView; stops: SearchStop[] }[], now: number): StationMatch[] {
   const q = parseStationQuery(query);
   // A station is needed: "08:00" alone would be half the trains in the country.
   if (q.words.join('').length < 3) return [];
@@ -43,7 +58,6 @@ export function searchByStation(query: string, trains: { view: TrainView; stops:
     const w = words(name);
     return q.words.every((qw) => w.some((sw) => sw.startsWith(qw)));
   };
-  const nowMinute = minuteOfDay(now);
   const matches: (StationMatch & { score: number })[] = [];
   for (const { view, stops } of trains) {
     let best: (StationMatch & { score: number }) | undefined;
@@ -52,20 +66,27 @@ export function searchByStation(query: string, trains: { view: TrainView; stops:
       const last = i === stops.length - 1;
       const at = (last ? s.arr ?? s.dep : s.dep ?? s.arr);
       if (at === undefined) return;
-      const minute = minuteOfDay(at);
+      const expected = s.expected ?? at + Math.max(0, view.delayMin ?? 0) * 60_000;
+      // Not known to have passed, but well past its time: gone all the same.
+      const state = s.here ? 'here' : s.passed || expected < now - 5 * 60_000 ? 'gone' : 'due';
       let score: number;
       if (q.minute !== undefined) {
-        const d = Math.abs(minute - q.minute);
+        // Nearest the time asked.
+        const d = Math.abs(minuteOfDay(at) - q.minute);
         score = Math.min(d, 24 * 60 - d);
         if (score > NEAR_MINUTES) return;
       } else {
-        // Soonest first; ones already gone after those still to come.
-        const ahead = (minute - nowMinute + 24 * 60) % (24 * 60);
-        score = at >= now - 5 * 60_000 ? ahead : 24 * 60 + (now - at) / 60_000;
+        // A departure board: still to come, soonest first; then the ones that
+        // have just called there, most recent first.
+        score = state === 'gone' ? 1e9 + (now - expected) : expected - now;
       }
-      if (!best || score < best.score) best = { id: view.id, station: s.name!, at, kind: last ? 'arr' : 'dep', score };
+      if (!best || score < best.score) best = { id: view.id, station: s.name!, at, kind: last ? 'arr' : 'dep', expected, state, score };
     });
     if (best) matches.push(best);
   }
-  return matches.sort((a, b) => a.score - b.score || a.at - b.at).slice(0, MAX_RESULTS).map(({ score: _, ...m }) => m);
+  matches.sort((a, b) => a.score - b.score || a.at - b.at);
+  // Without a time, at most a few that have already gone.
+  const gone = q.minute === undefined ? matches.filter((m) => m.state === 'gone' && m.expected > now - GONE_FOR_MS).slice(0, MAX_GONE) : [];
+  const shown = q.minute === undefined ? [...matches.filter((m) => m.state !== 'gone').slice(0, MAX_RESULTS - gone.length), ...gone] : matches.slice(0, MAX_RESULTS);
+  return shown.map(({ score: _, ...m }) => m);
 }
