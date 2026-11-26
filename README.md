@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="public/logo.svg" width="96" height="96" alt="Every Train logo">
+<img src="public/logo.svg" width="96" height="96" alt="Every Train UK logo">
 
-# Every Train
+# Every Train UK
 
 **Every train in Great Britain, moving on one map, in real time.**
 

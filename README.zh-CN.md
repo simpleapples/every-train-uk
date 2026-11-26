@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="public/logo.svg" width="96" height="96" alt="Every Train logo">
+<img src="public/logo.svg" width="96" height="96" alt="Every Train UK logo">
 
-# Every Train
+# Every Train UK
 
 **大不列颠所有火车，实时跑在同一张地图上。**
 
