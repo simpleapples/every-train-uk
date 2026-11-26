@@ -344,6 +344,26 @@ describe('TrainStore', () => {
     expect(store.snapshot()[0].speedKmh).toBe(120);
   });
 
+  it("never shows a speed above the train's timetabled top speed", () => {
+    // A 60 mph (97 km/h) freight train, scheduled 20 minutes for the section.
+    const timetable = {
+      byUid: () => ({ uid: 'C10001', date: '2026-10-31', atoc: 'ZZ', origin: 'A', destination: 'B', service: { power: 'D', speed: '060' } }),
+      match: () => undefined,
+    };
+    const run = (metres: number) => {
+      const store = new TrainStore(index, undefined, () => metres);
+      store.setTimetable(timetable);
+      store.apply({ header: { msg_type: '0001' }, body: { train_id: '871S12MO31', toc_id: '61', train_uid: 'C10001', tp_origin_timestamp: '2026-10-31' } }, T0 - 60_000);
+      store.apply(movement({}), T0);
+      return store.snapshot()[0];
+    };
+    expect(run(30_000)).toMatchObject({ speedKmh: 90, topKmh: 97 });
+    // 128 km/h from a long path or short running time: shown as the top speed.
+    expect(run(42_667).speedKmh).toBe(97);
+    // Far over it: something is wrong, so no speed at all.
+    expect(run(60_000).speedKmh).toBeUndefined();
+  });
+
   it('measures speed over the last section from actual report times', () => {
     const store = new TrainStore(index, undefined, () => 40_000);
     store.apply(movement({}), T0);

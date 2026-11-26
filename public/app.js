@@ -570,11 +570,12 @@ let calloutMarker = null;
 function speedOf(t) {
   if (t.state !== 'moving') return null;
   const measured = t.measuredKmh ? `Measured ${t.measuredKmh} km/h over ${t.measuredSection}, from actual report times.` : '';
+  const top = t.topKmh ? `Never shown above its top speed, ${t.topKmh} km/h.` : '';
   if (t.speedKmh) {
     const how = t.mode ? 'Average over this section, from TfL arrival predictions.' : 'Average over this section, from its scheduled running time.';
-    return { text: `≈ ${t.speedKmh} km/h`, tip: `${how} ${measured}`.trim() };
+    return { text: `≈ ${t.speedKmh} km/h`, tip: [how, measured, top].filter(Boolean).join(' ') };
   }
-  return t.measuredKmh ? { text: `${t.measuredKmh} km/h`, tip: measured } : null;
+  return t.measuredKmh ? { text: `${t.measuredKmh} km/h`, tip: [measured, top].filter(Boolean).join(' ') } : null;
 }
 
 const LOAD_COLORS = ['#1a9e6f', '#86b41f', '#f79009', '#d9412b'];

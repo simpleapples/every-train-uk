@@ -48,6 +48,8 @@ export interface TrainView {
   /** Average speed over the last completed section, from actual report times. */
   measuredKmh?: number;
   measuredSection?: string;
+  /** The train's timetabled top speed, km/h, which the speeds above never exceed. */
+  topKmh?: number;
   /** TfL network (Underground, DLR, Overground, Elizabeth line); absent for National Rail. */
   mode?: 'tube' | 'dlr' | 'overground' | 'elizabeth-line';
   line?: string;
@@ -111,6 +113,9 @@ export type DistanceFn = (fromKey: string, toKey: string) => number | null;
 const MIN_MEASURE_MS = 30_000;
 // Above GB line speeds (200 km/h, with margin): a bad report, path or timing.
 const MAX_KMH = 225;
+// Over a train's own top speed, an average comes from rounded times or a path a
+// little long: shown as the top speed. Over this many times it, something is wrong.
+const OVER_TOP_SPEED = 1.5;
 
 const MAX_HISTORY = 150;
 
@@ -124,6 +129,18 @@ const BST_SKEW_MS = 60 * 60_000;
 
 // Headcode first digit 0/3/4/5/6/7/8 is light engines, empty stock or freight.
 const NON_PASSENGER_CLASSES = new Set(['0', '3', '4', '5', '6', '7', '8']);
+
+/** The train's timetabled top speed in km/h, when its schedule gives one. */
+function topKmhOf(rec: TrainRecord): number | undefined {
+  const mph = Number(rec.schedule?.service?.speed);
+  return mph > 0 ? Math.round(mph * 1.609) : undefined;
+}
+
+/** A speed no higher than the train can go: capped at its top speed, or nothing if far over it. */
+function capped(kmh: number | undefined, topKmh: number | undefined): number | undefined {
+  if (kmh === undefined || !topKmh) return kmh;
+  return kmh > topKmh * OVER_TOP_SPEED ? undefined : Math.min(kmh, topKmh);
+}
 
 export function trustTime(raw: string | null | undefined, receivedAt: number): number {
   const t = Number(raw);
@@ -323,8 +340,9 @@ export class TrainStore {
       platform: body.platform?.trim() || undefined,
       reportedAt: at,
       departedAt: at,
-      measuredKmh: rec.measured?.kmh,
+      measuredKmh: capped(rec.measured?.kmh, topKmhOf(rec)),
       measuredSection: rec.measured?.section,
+      topKmh: topKmhOf(rec),
     };
     const next = this.#locations.get(body.next_report_stanox);
     const runMin = Number(body.next_report_run_time);
@@ -348,12 +366,12 @@ export class TrainStore {
         departedAt = Math.min(at, left?.dep ?? left?.arr ?? (rec.view?.state === 'moving' ? rec.view.departedAt : at));
       }
       const runMs = at + runMin * 60_000 - departedAt;
-      rec.view = { ...base, departedAt, state: 'moving', to: next, runMs, speedKmh: this.#speedKmh(here.key, next.key, runMs) };
+      rec.view = { ...base, departedAt, state: 'moving', to: next, runMs, speedKmh: capped(this.#speedKmh(here.key, next.key, runMs), base.topKmh) };
     } else if (placed && !passing) {
       const toward = next && next.key !== here.key ? next.key : undefined;
       rec.view = { ...base, state: 'stopped', to: null, runMs: 0, speedKmh: 0, toward };
     } else {
-      rec.view = { ...rec.view!, ...scheduled, delayMin, reportedAt: at, measuredKmh: base.measuredKmh, measuredSection: base.measuredSection };
+      rec.view = { ...rec.view!, ...scheduled, delayMin, reportedAt: at, measuredKmh: base.measuredKmh, measuredSection: base.measuredSection, topKmh: base.topKmh };
     }
     this.#changed.add(id);
     // Removed and re-added within one push: the browser must not drop it.
