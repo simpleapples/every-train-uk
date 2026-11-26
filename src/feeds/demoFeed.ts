@@ -234,7 +234,8 @@ export class DemoFeed implements Feed {
     this.#plans.set(trainId, stops.map((s, i) => ({
       key: s.tiploc,
       call: s.call,
-      arr: i > 0 ? startsAt + s.arr : undefined,
+      // As in a real timetable: a passing point has a passing time, no arrival.
+      arr: i > 0 && (s.call || i === stops.length - 1) ? startsAt + s.arr : undefined,
       dep: i < stops.length - 1 ? startsAt + s.dep : undefined,
     })));
     return { trainId, events };

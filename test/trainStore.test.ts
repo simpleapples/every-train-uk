@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LocationIndex } from '../src/engine/locations.ts';
+import { RunTimes } from '../src/engine/runTimes.ts';
 import { TrainStore, trustTime } from '../src/engine/trainStore.ts';
 import type { TrustMessage } from '../src/trust/types.ts';
 
@@ -102,7 +103,8 @@ describe('TrainStore', () => {
       passing.apply(activation('C10001'), T0 - 60_000);
       passing.apply(movement({ toc_id: '88' }), T0);
       passing.apply(arrive, T0 + 20 * 60_000);
-      expect(passing.snapshot()[0]).toMatchObject({ state: 'moving', to: { key: '70011' } });
+      // Running through, so it does not pull away from a stand either.
+      expect(passing.snapshot()[0]).toMatchObject({ state: 'moving', to: { key: '70011' }, motion: { startsStopped: false, endsStopped: true } });
 
       const stopping = new TrainStore(index, names);
       stopping.setTimetable(plan({ arr: T0 + 19 * 60_000, dep: T0 + 21 * 60_000, call: true }));
@@ -371,6 +373,90 @@ describe('TrainStore', () => {
     store.apply(movement({ event_type: 'ARRIVAL', loc_stanox: '86021', actual_timestamp: String(T0 + 24 * 60_000) }), T0 + 24 * 60_000);
     const [t] = store.snapshot();
     expect(t).toMatchObject({ measuredKmh: 100, measuredSection: 'London Kings Cross → Stevenage', speedKmh: 0 });
+  });
+
+  describe('how a train runs its section', () => {
+    it('starts and ends standing at stations, without a timetable', () => {
+      const store = new TrainStore(index);
+      store.apply(movement({}), T0);
+      expect(store.snapshot()[0].motion).toEqual({ startsStopped: true, endsStopped: true, accel: 0.5, brake: 0.6 });
+    });
+
+    // Late away from Kings Cross; through Wymondley Junction and Stevenage without stopping.
+    const plan = {
+      byUid: () => undefined,
+      match: () => ({ uid: 'C10001', date: '2026-10-31', atoc: 'GN', origin: 'London Kings Cross', destination: 'Peterborough' }),
+      plannedStops: () => [
+        { key: '87701', call: true, dep: T0 - 5 * 60_000, allowanceMs: 2 * 60_000 },
+        { key: '86099', call: false, dep: T0 + 5 * 60_000, allowanceMs: 60_000 },
+        { key: '86021', call: false, dep: T0 + 15 * 60_000 },
+        { key: '70011', call: true, arr: T0 + 40 * 60_000 },
+      ],
+    };
+    const late = (min: number) => movement({ planned_timestamp: String(T0 - 5 * 60_000), timetable_variation: String(min), variation_status: 'LATE' });
+
+    it('makes up the allowances padded into the run when late, as far as it is late', () => {
+      const store = new TrainStore(index);
+      store.setTimetable(plan);
+      store.apply(late(5), T0);
+      // 20 minutes planned, less the 3 minutes of allowance up to Stevenage.
+      expect(store.snapshot()[0]).toMatchObject({ runMs: 17 * 60_000, motion: { startsStopped: true, endsStopped: false } });
+
+      const slightly = new TrainStore(index);
+      slightly.setTimetable(plan);
+      slightly.apply(late(1), T0);
+      expect(slightly.snapshot()[0].runMs).toBe(19 * 60_000);
+    });
+
+    it('takes its full time when on time', () => {
+      const store = new TrainStore(index);
+      store.setTimetable(plan);
+      store.apply(movement({ planned_timestamp: String(T0 - 5 * 60_000) }), T0);
+      expect(store.snapshot()[0].runMs).toBe(20 * 60_000);
+    });
+  });
+
+  describe('recording section run times', () => {
+    const arrive = (stanox: string, min: number, next: string) => movement({
+      event_type: 'ARRIVAL', planned_event_type: 'ARRIVAL', loc_stanox: stanox, actual_timestamp: String(T0 + min * 60_000), next_report_stanox: next,
+    });
+    const depart = (stanox: string, min: number, next: string) => movement({
+      loc_stanox: stanox, actual_timestamp: String(T0 + min * 60_000), next_report_stanox: next,
+    });
+
+    it('times each run from one reporting point to the next, by kind of train', () => {
+      const runTimes = new RunTimes();
+      const store = new TrainStore(index, undefined, null, new Set(), runTimes);
+      store.apply(movement({}), T0);
+      store.apply(arrive('86021', 24, '70011'), T0 + 24 * 60_000);
+      store.apply(depart('86021', 26, '70011'), T0 + 26 * 60_000);
+      store.apply(movement({ event_type: 'ARRIVAL', planned_event_type: 'PASS', loc_stanox: '70011', actual_timestamp: String(T0 + 50 * 60_000) }), T0 + 50 * 60_000);
+      // No schedule yet: operator and class digit.
+      expect(runTimes.exportState(T0).sections).toEqual({
+        '87701>86021|ss|c:61/1': [T0 + 24 * 60_000, 24 * 60],
+        '86021>70011|sp|c:61/1': [T0 + 50 * 60_000, 24 * 60],
+      });
+      expect(store.stats.runTimes).toEqual({ sections: 2, runs: 2 });
+    });
+
+    it('skips a run when a report in between went missing', () => {
+      const runTimes = new RunTimes();
+      const store = new TrainStore(index, undefined, null, new Set(), runTimes);
+      // Expected next at Wymondley Junction, but next heard of at Peterborough.
+      store.apply(movement({ next_report_stanox: '86099' }), T0);
+      store.apply(arrive('70011', 45, ''), T0 + 45 * 60_000);
+      expect(runTimes.stats.runs).toBe(0);
+    });
+
+    it("uses the schedule's power type and timing load once it is known", () => {
+      const runTimes = new RunTimes();
+      const store = new TrainStore(index, undefined, null, new Set(), runTimes);
+      const info = { uid: 'C10001', date: '2026-10-31', atoc: 'GN', origin: 'London Kings Cross', destination: 'Peterborough', service: { power: 'EMU', timingLoad: '387' } };
+      store.setTimetable({ byUid: () => undefined, match: () => info });
+      store.apply(movement({ planned_timestamp: String(T0) }), T0);
+      store.apply(arrive('86021', 20, '70011'), T0 + 20 * 60_000);
+      expect(Object.keys(runTimes.exportState(T0).sections)).toEqual(['87701>86021|ss|t:EMU/387']);
+    });
   });
 
   it('only sends each change once', () => {
