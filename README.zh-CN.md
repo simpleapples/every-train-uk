@@ -69,7 +69,7 @@ Demo 模式不需要账号。国铁是**模拟**的（28 个班次、约 200 列
 
 ### 🔴 接入真实国铁数据
 
-1. 在 [Network Rail Open Data](https://publicdatafeeds.networkrail.co.uk) 免费注册。在 [My Feeds](https://publicdatafeeds.networkrail.co.uk/ntrod/myFeeds) 页面订阅列车运行（全部运营公司）、SCHEDULE 和 VSTP。名额上限 1000 人，先到先得。
+1. 在 [Network Rail Open Data](https://publicdatafeeds.networkrail.co.uk) 免费注册。在 [My Feeds](https://publicdatafeeds.networkrail.co.uk/ntrod/myFeeds) 页面订阅列车运行（全部运营公司）、SCHEDULE、VSTP 和 All Reference Data。名额上限 1000 人，先到先得。
 2. 复制 `.env.example` 为 `.env`，填入 `NROD_USERNAME` 和 `NROD_PASSWORD`。
 3. 运行：
 

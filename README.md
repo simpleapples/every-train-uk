@@ -69,7 +69,7 @@ Demo mode needs no account. It **simulates** National Rail (about 200 trains on 
 
 ### 🔴 Live National Rail data
 
-1. Register (free) at [Network Rail Open Data](https://publicdatafeeds.networkrail.co.uk). On the [My Feeds](https://publicdatafeeds.networkrail.co.uk/ntrod/myFeeds) page, subscribe to train movements (all TOCs), SCHEDULE and VSTP. The service is limited to 1,000 users, first come first served.
+1. Register (free) at [Network Rail Open Data](https://publicdatafeeds.networkrail.co.uk). On the [My Feeds](https://publicdatafeeds.networkrail.co.uk/ntrod/myFeeds) page, subscribe to train movements (all TOCs), SCHEDULE, VSTP and All Reference Data. The service is limited to 1,000 users, first come first served.
 2. Copy `.env.example` to `.env` and fill in `NROD_USERNAME` and `NROD_PASSWORD`.
 3. Run:
 
