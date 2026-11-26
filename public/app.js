@@ -1592,7 +1592,7 @@ function renderLayers() {
       : '';
     return `<div class="lsec"><div class="lsec-h">${title}${toggle}</div>${rows}</div>`;
   };
-  html += list('Operators', 'ops', [...groups.find((g) => g.net === 'rail').badges]);
+  html += list('National Rail operators', 'ops', [...groups.find((g) => g.net === 'rail').badges]);
   html += list('TfL lines', 'lines', groups.filter((g) => g.net !== 'rail').flatMap((g) => g.badges));
 
   // Closed lines first: they explain why a line has no trains.
