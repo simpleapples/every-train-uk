@@ -23,6 +23,7 @@ let pendingFit = false; // zoom to the selected train's route when its detail ar
 let following = false; // keep the selected train centred
 let lastStatus = null;
 let streamOk = false; // false while the SSE connection to our server is down
+let haveSnapshot = false; // trains have arrived at least once
 let shown = new Set(NETWORKS);
 // Lines ("tfl:central") and operators ("rail:LNER") switched off.
 let hiddenLines = new Set();
@@ -46,9 +47,28 @@ function setHtml(el, html) {
   return true;
 }
 
+// Light or dark, as the system is set. The map's own colours follow; switching
+// reloads the page, as the map's layers would otherwise need rebuilding.
+const darkScheme = matchMedia('(prefers-color-scheme: dark)');
+darkScheme.addEventListener('change', () => location.reload());
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const THEME = darkScheme.matches
+  ? {
+    style: 'https://tiles.openfreemap.org/styles/dark',
+    ink: '#f2f4f7', inkPassed: '#98a2b3', halo: '#161b26', casing: '#0c111d', railLine: '#5b6578',
+    // OpenRailwayMap's dark lines, lifted to grey to show on a dark map.
+    rail: { 'raster-opacity': 0.22, 'raster-saturation': -1, 'raster-brightness-min': 0.3, 'raster-contrast': 0.1 }, railFocused: 0.1,
+  }
+  : {
+    style: 'https://tiles.openfreemap.org/styles/positron',
+    ink: '#1d2330', inkPassed: '#667085', halo: '#ffffff', casing: '#ffffff', railLine: '#8d97ab',
+    rail: { 'raster-opacity': 0.45, 'raster-saturation': -1, 'raster-contrast': 0.15 }, railFocused: 0.2,
+  };
+const motion = (ms) => (reduceMotion.matches ? 0 : ms);
+
 const map = new maplibregl.Map({
   container: 'map',
-  style: 'https://tiles.openfreemap.org/styles/positron',
+  style: THEME.style,
   bounds: GB_BOUNDS,
   fitBoundsOptions: { padding: mapPadding() },
   minZoom: 4,
@@ -408,6 +428,7 @@ function select(id) {
   // Zoom to the whole route once its detail arrives, even if a newer request
   // for the same train replaces the first one.
   pendingFit = true;
+  setFolded(false);
   setFollow(false);
   setRoute(null);
   $('d-calls').replaceChildren();
@@ -443,14 +464,14 @@ function setFocusStyle() {
   const dim = (v) => (focused ? ['case', ['==', ['get', 'selected'], true], 1, v] : 1);
   map.setPaintProperty('trains', 'icon-opacity', dim(0.25));
   map.setPaintProperty('train-labels', 'text-opacity', dim(0));
-  map.setPaintProperty('openrailwaymap', 'raster-opacity', focused ? 0.2 : 0.45);
+  map.setPaintProperty('openrailwaymap', 'raster-opacity', focused ? THEME.railFocused : THEME.rail['raster-opacity']);
 }
 
 function setFollow(on) {
   following = on;
   $('d-follow').setAttribute('aria-pressed', String(on));
   const t = on && selectedId && trains.get(selectedId);
-  if (t) map.easeTo({ center: positionOf(t, serverNow()), zoom: Math.max(map.getZoom(), 11), padding: mapPadding(), duration: 600 });
+  if (t) map.easeTo({ center: positionOf(t, serverNow()), zoom: Math.max(map.getZoom(), 11), padding: mapPadding(), duration: motion(600) });
 }
 
 const stampOf = (t) => `${t.id}|${t.from.key}|${t.state}`;
@@ -551,7 +572,7 @@ function fitRoute() {
   if (coords.length < 2) return;
   setFollow(false);
   const bounds = coords.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(coords[0], coords[0]));
-  map.fitBounds(bounds, { padding: mapPadding(), maxZoom: 12, duration: 800 });
+  map.fitBounds(bounds, { padding: mapPadding(), maxZoom: 12, duration: motion(800) });
 }
 
 function renderDetailHead(t) {
@@ -865,6 +886,11 @@ function render() {
  * Rail by lateness while it is on, otherwise each TfL network shown.
  */
 function renderLegend(total, counts, perNet) {
+  // Until the first snapshot, "0 total" would say there are no trains.
+  if (!haveSnapshot) {
+    setHtml($('legend'), '<span class="lg-loading">Loading trains…</span>');
+    return;
+  }
   const cell = (n, label, color) => `<span class="lg"><b>${color ? `<i class="dot" style="background:${color}"></i>` : ''}${n.toLocaleString()}</b>${label}</span>`;
   const cells = [cell(total, 'total')];
   if (shown.has('rail')) {
@@ -948,6 +974,7 @@ function connect() {
   es.addEventListener('snapshot', (e) => {
     const d = JSON.parse(e.data);
     streamOk = true;
+    haveSnapshot = true;
     setClock(d.serverTime);
     trains.clear();
     for (const t of d.trains) trains.set(t.id, t);
@@ -1046,7 +1073,7 @@ map.on('load', () => {
     id: 'openrailwaymap',
     type: 'raster',
     source: 'openrailwaymap',
-    paint: { 'raster-opacity': 0.45, 'raster-saturation': -1, 'raster-contrast': 0.15 },
+    paint: THEME.rail,
   }, firstSymbol);
 
   // Basemap's own rail geometry: crisper once zoomed in (it starts around z8.5).
@@ -1057,7 +1084,7 @@ map.on('load', () => {
     'source-layer': 'transportation',
     filter: ['all', ['==', ['get', 'class'], 'rail'], ['!', ['has', 'service']]],
     paint: {
-      'line-color': '#8d97ab',
+      'line-color': THEME.railLine,
       'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 9, 1.4, 14, 3],
       'line-opacity': 0.8,
     },
@@ -1070,7 +1097,7 @@ map.on('load', () => {
     type: 'line',
     source: 'route-line',
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 7, 12, 13] },
+    paint: { 'line-color': THEME.casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 7, 12, 13] },
   });
   map.addLayer({
     id: 'route-line',
@@ -1092,7 +1119,7 @@ map.on('load', () => {
     source: 'route',
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 2.5, 12, 4],
-      'circle-color': '#ffffff',
+      'circle-color': THEME.casing,
       'circle-stroke-color': ['get', 'color'],
       'circle-stroke-opacity': ['match', ['get', 'status'], 'passed', 0.45, 1],
       'circle-stroke-width': 1.5,
@@ -1111,8 +1138,8 @@ map.on('load', () => {
       'text-justify': 'auto',
     },
     paint: {
-      'text-color': ['match', ['get', 'status'], 'passed', '#667085', '#1d2330'],
-      'text-halo-color': '#ffffff',
+      'text-color': ['match', ['get', 'status'], 'passed', THEME.inkPassed, THEME.ink],
+      'text-halo-color': THEME.halo,
       'text-halo-width': 1.6,
     },
   });
@@ -1128,7 +1155,7 @@ map.on('load', () => {
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 7, 8, 11.5, 12, 15.5],
       'circle-color': 'rgba(0, 0, 0, 0)',
-      'circle-stroke-color': '#1d2330',
+      'circle-stroke-color': THEME.ink,
       'circle-stroke-width': 2.5,
     },
   });
@@ -1162,7 +1189,7 @@ map.on('load', () => {
       'text-anchor': 'top',
       'text-allow-overlap': false,
     },
-    paint: { 'text-color': '#1d2330', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+    paint: { 'text-color': THEME.ink, 'text-halo-color': THEME.halo, 'text-halo-width': 1.5 },
   });
 
   map.on('click', (e) => {
@@ -1386,6 +1413,7 @@ $('filters').addEventListener('click', (e) => {
   if (!btn) return;
   if (btn.classList.contains('lines-toggle')) {
     linesOpen = !linesOpen;
+    setFolded(false);
     renderFilters();
   } else if (btn.dataset.act === 'all') {
     applyFilter(NETWORKS, []);
@@ -1397,6 +1425,20 @@ $('filters').addEventListener('click', (e) => {
     toggleLine(btn.dataset.key);
   }
 });
+
+// ---- Phones: the bottom sheet folds down to show the map ----
+
+function setFolded(on) {
+  const folded = on && isNarrow();
+  panel.classList.toggle('folded', folded);
+  $('sheet-handle').setAttribute('aria-expanded', String(!folded));
+  $('sheet-handle').setAttribute('aria-label', folded ? 'Show the panel' : 'Fold the panel to see the map');
+}
+$('sheet-handle').addEventListener('click', () => setFolded(!panel.classList.contains('folded')));
+panel.querySelector('.panel-head').addEventListener('click', () => setFolded(false));
+$('search-input').addEventListener('focus', () => setFolded(false));
+// Moving the map means looking at it.
+map.on('dragstart', () => setFolded(true));
 
 // ---- Controls ----
 

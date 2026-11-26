@@ -38,7 +38,8 @@ Trains glide along the real track, each with its whole route, next stop, delay a
 - 🔎 **Search and filter.** Find a train by headcode, line, operator or destination, or the way passengers know it: by a station and a time ("Paddington 14:00"). Show any mix of networks, lines and operators, like "only the Central line and LNER".
 - ⚡ **Fast and light.** One Server-Sent Events stream with one-second deltas, gzip throughout, and batched track geometry. Trains survive server restarts.
 - 📦 **Zero runtime dependencies.** Node runs the TypeScript sources directly. `docker compose up` and you're live.
-- 📱 **Works on phones**, with a bottom-sheet layout.
+- 📱 **Works on phones**, with a bottom sheet that folds away when you move the map.
+- 🌙 **Light and dark**, following the system setting, map included.
 
 ## 📸 Screenshots
 

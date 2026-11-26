@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>UK Live Trains</title>
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161b26" media="(prefers-color-scheme: dark)">
   <meta name="description" content="Live map of trains on the Great Britain rail network and London's TfL lines.">
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -15,6 +17,7 @@
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
 
   <aside id="panel" class="panel" aria-label="Train map controls">
+    <button id="sheet-handle" class="sheet-handle" type="button" aria-expanded="true" aria-label="Fold the panel to see the map"></button>
     <header class="panel-head">
       <h1><img class="logo" src="/logo.svg" alt="" width="24" height="24">UK Live Trains</h1>
       <span id="notices" class="notices"></span>
