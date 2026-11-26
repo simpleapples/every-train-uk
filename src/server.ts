@@ -10,6 +10,7 @@ import { LocationIndex, type StanoxTable, type StationTable, type TimingPointTab
 import { PathService } from './engine/paths.ts';
 import type { TrainSource } from './engine/source.ts';
 import { lineLengthM, TrackNetwork, type TrackJson } from './engine/track.ts';
+import { searchByStation } from './engine/stationSearch.ts';
 import { describeTrain } from './engine/trainDetails.ts';
 import { type OperatorNameFn, type StoreState, TrainStore } from './engine/trainStore.ts';
 import { DemoFeed } from './feeds/demoFeed.ts';
@@ -206,6 +207,7 @@ const app = createApp({
   publicDir: fileURLToPath(new URL('../public', import.meta.url)),
   describe: (id) => describeTrain(id, store, locations, paths, plannedStops),
   path: (from, to, line) => (line ? tflPaths.get(line) : paths)?.between(from, to) ?? null,
+  search: (q) => searchByStation(q, store.snapshot().map((view) => ({ view, stops: plannedStops?.(view.id) ?? [] })), Date.now()),
 });
 
 app.server.listen(port, () => {

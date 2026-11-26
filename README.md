@@ -35,7 +35,7 @@ Trains glide along the real track, each with its whole route, next stop, delay a
 - 🚄 **What the train is.** Its class and name (Class 390 Pendolino, Class 800 Azuma), top speed, first class, catering and sleepers, read from the timetable.
 - 👥 **How busy the Tube is.** Tube, Overground, DLR and Elizabeth line trains show their rolling stock and how full they usually are on that section at that time, from TfL's NUMBAT model. (TfL publishes no live train loading.)
 - 🚦 **Line status built in.** TfL closures and delays are flagged on each line, so a quiet line explains itself (e.g. "Piccadilly: Planned Closure").
-- 🔎 **Search and filter.** Find a train by headcode, line, operator or destination. Show any mix of networks, lines and operators, like "only the Central line and LNER".
+- 🔎 **Search and filter.** Find a train by headcode, line, operator or destination, or the way passengers know it: by a station and a time ("Paddington 14:00"). Show any mix of networks, lines and operators, like "only the Central line and LNER".
 - ⚡ **Fast and light.** One Server-Sent Events stream with one-second deltas, gzip throughout, and batched track geometry. Trains survive server restarts.
 - 📦 **Zero runtime dependencies.** Node runs the TypeScript sources directly. `docker compose up` and you're live.
 - 📱 **Works on phones**, with a bottom-sheet layout.

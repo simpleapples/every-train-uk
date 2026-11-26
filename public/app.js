@@ -682,9 +682,17 @@ function renderDetail(d, scroll) {
 }
 
 // ---- Search ----
+//
+// Headcode, line, operator or destination, matched here; and a station a train
+// calls at, with or without a time ("Paddington 08:00"), asked of the server,
+// which has the timetables.
 
-let results = [];
+let results = []; // { t, sub }
 let activeResult = -1;
+let stationHits = [];
+let stationTimer = null;
+let stationPending = false;
+const TIME_IN_QUERY = /\b([01]?\d|2[0-3])[:.]?[0-5]\d\b/;
 
 function searchTrains(query) {
   const q = query.trim().toLowerCase();
@@ -707,6 +715,40 @@ function searchTrains(query) {
   return scored.slice(0, 8).map((s) => s.t);
 }
 
+/** The trains to list for a query: local matches, then trains calling at a station. */
+function searchResults(query) {
+  // With a time in it, the query is a station and a time.
+  const local = TIME_IN_QUERY.test(query) ? [] : searchTrains(query).map((t) => ({ t, sub: whereLabel(t) }));
+  const seen = new Set(local.map((r) => r.t.id));
+  const calling = stationHits.flatMap((h) => {
+    const t = trains.get(h.id);
+    if (!t || seen.has(h.id) || !visible(t)) return [];
+    seen.add(h.id);
+    return [{ t, sub: `${h.kind === 'dep' ? 'Departs' : 'Arrives'} ${h.station} ${hhmm(h.at)}` }];
+  });
+  return [...local, ...calling].slice(0, 8);
+}
+
+function lookUpStations(query) {
+  clearTimeout(stationTimer);
+  const q = query.trim();
+  stationHits = [];
+  stationPending = q.length >= 3;
+  if (!stationPending) return;
+  stationTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      if ($('search-input').value.trim() !== q) return;
+      stationHits = res.ok ? (await res.json()).results : [];
+    } catch { /* the local matches stand */ }
+    if ($('search-input').value.trim() !== q) return;
+    stationPending = false;
+    results = searchResults(q);
+    activeResult = results.length ? Math.max(0, activeResult) : -1;
+    renderResults();
+  }, 200);
+}
+
 function renderResults() {
   const list = $('search-results');
   const input = $('search-input');
@@ -715,11 +757,11 @@ function renderResults() {
     return;
   }
   if (!results.length) {
-    list.innerHTML = '<li class="result empty" role="option" aria-disabled="true">No matching trains</li>';
+    list.innerHTML = `<li class="result empty" role="option" aria-disabled="true">${stationPending ? 'Searching…' : 'No matching trains'}</li>`;
   } else {
-    list.innerHTML = results.map((t, i) => `
+    list.innerHTML = results.map(({ t, sub }, i) => `
       <li class="result" role="option" id="result-${i}" data-id="${escapeHtml(t.id)}" aria-selected="${i === activeResult}">
-        <span class="r-main"><span class="r-title">${shortHtml(t)}</span><span class="r-sub">${escapeHtml(whereLabel(t))}</span></span>
+        <span class="r-main"><span class="r-title">${shortHtml(t)}</span><span class="r-sub">${escapeHtml(sub)}</span></span>
         ${!t.mode && t.delayMin > 0 ? `<span class="r-badge">+${t.delayMin}</span>` : ''}
       </li>`).join('');
   }
@@ -737,7 +779,8 @@ function hideResults() {
 }
 
 $('search-input').addEventListener('input', (e) => {
-  results = searchTrains(e.target.value);
+  lookUpStations(e.target.value);
+  results = searchResults(e.target.value);
   activeResult = results.length ? 0 : -1;
   renderResults();
 });
@@ -752,8 +795,8 @@ $('search-input').addEventListener('keydown', (e) => {
     renderResults();
   } else if (e.key === 'Enter') {
     e.preventDefault();
-    const t = results[Math.max(0, activeResult)];
-    if (t) choose(t.id);
+    const r = results[Math.max(0, activeResult)];
+    if (r) choose(r.t.id);
   } else if (e.key === 'Escape') {
     e.stopPropagation();
     e.target.value = '';

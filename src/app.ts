@@ -21,6 +21,8 @@ export interface AppOptions {
   describe?: (trainId: string) => unknown;
   /** Track geometry between two location keys (on a TfL line's own track when `line` is given); null if unknown. */
   path?: (fromKey: string, toKey: string, line?: string) => unknown;
+  /** Trains on the map by a station they call at, and a time ("Paddington 08:00"). */
+  search?: (query: string) => unknown[];
 }
 
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
@@ -47,7 +49,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
-export function createApp({ feed, store, sources = [], publicDir, pushIntervalMs = 1000, describe, path: trackPath }: AppOptions) {
+export function createApp({ feed, store, sources = [], publicDir, pushIntervalMs = 1000, describe, path: trackPath, search }: AppOptions) {
   const clients = new Set<StreamClient>();
   const root = path.resolve(publicDir);
 
@@ -125,6 +127,9 @@ export function createApp({ feed, store, sources = [], publicDir, pushIntervalMs
       const id = url.searchParams.get('id') ?? '';
       const detail = describe?.(id) ?? sources.map((s) => s.describe(id)).find(Boolean);
       return detail ? json(req, res, { ...detail, serverTime: Date.now() }) : json(req, res, { error: 'unknown train' }, 404);
+    }
+    if (url.pathname === '/api/search') {
+      return json(req, res, { results: search?.(url.searchParams.get('q')?.slice(0, 100) ?? '') ?? [] });
     }
     if (url.pathname === '/api/path') {
       const coords = trackPath?.(url.searchParams.get('from') ?? '', url.searchParams.get('to') ?? '', url.searchParams.get('line') || undefined);
