@@ -18,7 +18,7 @@
 
 <br>
 
-<img src="docs/screenshots/hero.jpg" alt="全英国约 1450 列实时列车，按准点着色，每列车带方向箭头" width="100%">
+<img src="docs/screenshots/hero.jpg" alt="全英国约 1900 列实时列车，按准点着色，每列车带方向箭头" width="100%">
 
 <sub>一个周日下午：地图上同时有约 1450 列车。</sub>
 
@@ -45,12 +45,15 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/train.jpg" alt="一列从曼彻斯特开往伊斯特利的 CrossCountry 列车：地图上画出路线，面板列出停靠站"><br><sub><b>点一列车</b>，看它的路线、停靠站和时间。走过的轨道在身后变浅。</sub></td>
+    <td width="50%"><img src="docs/screenshots/train.jpg" alt="一列从普利茅斯开往爱丁堡、快到终点的 CrossCountry 列车：地图上画出路线，面板列出停靠站"><br><sub><b>点一列车</b>，看它的路线、停靠站和时间。走过的轨道在身后变浅。</sub></td>
     <td width="50%"><img src="docs/screenshots/london.jpg" alt="伦敦市中心的地铁、Overground、Elizabeth line、DLR 和国铁列车"><br><sub><b>伦敦</b>：地铁按线路颜色，国铁按准点，放大后显示车次号。</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/lines.jpg" alt="Lines 面板：每家运营公司和每条 TfL 线一个小标，下面是今天的停运和延误"><br><sub><b>选择线路和运营公司</b>，查看今天的停运和延误。</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/mobile.jpg" alt="手机上的地图" width="56%"><br><sub><b>手机上。</b></sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/mobile.jpg" alt="手机上的一列 GWR 列车：地图上显示速度和下一站，下方面板列出停靠站" width="56%"><br><sub><b>手机上。</b>拖动地图时面板自动收起。</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/dark.jpg" alt="深色地图上的全英国列车"><br><sub><b>深色模式</b>，跟随系统设置。</sub></td>
   </tr>
 </table>
 

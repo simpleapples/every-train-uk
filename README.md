@@ -18,7 +18,7 @@ Trains glide along the real track, each with its whole route, next stop, delay a
 
 <br>
 
-<img src="docs/screenshots/hero.jpg" alt="About 1,450 live trains across Great Britain, coloured by punctuality, each with an arrow showing its direction" width="100%">
+<img src="docs/screenshots/hero.jpg" alt="About 1,900 live trains across Great Britain, coloured by punctuality, each with an arrow showing its direction" width="100%">
 
 <sub>A Sunday afternoon: about 1,450 trains on the map at once.</sub>
 
@@ -45,12 +45,15 @@ Trains glide along the real track, each with its whole route, next stop, delay a
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/train.jpg" alt="A CrossCountry train from Manchester to Eastleigh: its route drawn on the map and its calling points in the panel"><br><sub><b>Click a train</b> for its route, stops and times. Covered track fades behind it.</sub></td>
+    <td width="50%"><img src="docs/screenshots/train.jpg" alt="A CrossCountry train from Plymouth to Edinburgh, nearly there: its route drawn on the map and its calling points in the panel"><br><sub><b>Click a train</b> for its route, stops and times. Covered track fades behind it.</sub></td>
     <td width="50%"><img src="docs/screenshots/london.jpg" alt="Central London with Tube, Overground, Elizabeth line, DLR and National Rail trains"><br><sub><b>London</b>: Tube trains in line colours, National Rail by punctuality, headcodes when zoomed in.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/lines.jpg" alt="The Lines panel: a badge for every operator and TfL line, with today's disruptions"><br><sub><b>Pick lines and operators</b>, and see today's closures and delays.</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/mobile.jpg" alt="The map on a phone" width="56%"><br><sub><b>On a phone.</b></sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/mobile.jpg" alt="A GWR train on a phone: speed and next stop beside it on the map, its stops in the sheet below" width="56%"><br><sub><b>On a phone.</b> The sheet folds away when you move the map.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/dark.jpg" alt="Every train in Great Britain on the dark map"><br><sub><b>Dark mode</b>, when the system is set to it.</sub></td>
   </tr>
 </table>
 
