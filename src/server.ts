@@ -211,7 +211,7 @@ const app = createApp({
 });
 
 app.server.listen(port, () => {
-  console.log(`train-live (${feedKind}) on http://localhost:${port} — ${locations.size} mapped locations`);
+  console.log(`every-train (${feedKind}) on http://localhost:${port} — ${locations.size} mapped locations`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

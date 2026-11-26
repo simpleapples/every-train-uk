@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="public/logo.svg" width="96" height="96" alt="UK Live Trains logo">
+<img src="public/logo.svg" width="96" height="96" alt="Every Train logo">
 
-# UK Live Trains
+# Every Train
 
 **Every train in Great Britain, moving on one map, in real time.**
 
@@ -62,8 +62,8 @@ Trains glide along the real track, each with its whole route, next stop, delay a
 You need **Node.js 22.18 or newer**. Nothing to install: the app has no runtime dependencies.
 
 ```bash
-git clone https://github.com/simpleapples/uk-train-live.git
-cd uk-train-live
+git clone https://github.com/simpleapples/every-train.git
+cd every-train
 npm run demo
 ```
 

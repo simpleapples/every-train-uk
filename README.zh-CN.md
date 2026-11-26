@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="public/logo.svg" width="96" height="96" alt="UK Live Trains logo">
+<img src="public/logo.svg" width="96" height="96" alt="Every Train logo">
 
-# UK Live Trains
+# Every Train
 
 **大不列颠所有火车，实时跑在同一张地图上。**
 
@@ -62,8 +62,8 @@
 需要 **Node.js 22.18 或更新版本**。不用装任何东西，运行时没有依赖。
 
 ```bash
-git clone https://github.com/simpleapples/uk-train-live.git
-cd uk-train-live
+git clone https://github.com/simpleapples/every-train.git
+cd every-train
 npm run demo
 ```
 

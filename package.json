@@ -1,13 +1,13 @@
 {
-  "name": "uk-train-live",
+  "name": "every-train",
   "version": "0.1.0",
   "private": true,
   "description": "Every train in Great Britain on one live map: National Rail from Network Rail open data, plus the Tube, Overground, Elizabeth line and DLR from TfL",
   "keywords": ["trains", "railway", "live-map", "network-rail", "tfl", "london-underground", "maplibre", "open-data", "uk"],
-  "homepage": "https://github.com/simpleapples/uk-train-live#readme",
+  "homepage": "https://github.com/simpleapples/every-train#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/simpleapples/uk-train-live.git"
+    "url": "git+https://github.com/simpleapples/every-train.git"
   },
   "license": "MIT",
   "type": "module",

@@ -448,7 +448,7 @@ async function osmPlaces(file: string, query: string): Promise<OsmPlace[]> {
     await mkdir(OSM_CACHE, { recursive: true });
     for (const server of OVERPASS) {
       try {
-        const res = await fetch(server, { method: 'POST', body: new URLSearchParams({ data: `[out:json][timeout:120];${query};out center tags;` }), headers: { 'User-Agent': 'train-live-prototype/0.1 (rail map prototype)' }, signal: AbortSignal.timeout(150_000) });
+        const res = await fetch(server, { method: 'POST', body: new URLSearchParams({ data: `[out:json][timeout:120];${query};out center tags;` }), headers: { 'User-Agent': 'every-train/0.1 (+https://github.com/simpleapples/every-train)' }, signal: AbortSignal.timeout(150_000) });
         const text = await res.text();
         if (res.ok && text.includes('"elements"')) {
           await writeFile(cached, text);

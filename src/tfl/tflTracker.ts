@@ -82,7 +82,7 @@ export interface TflLineStatusResponse {
 type Chain = { key: string; tts: number }[];
 
 const API = 'https://api.tfl.gov.uk';
-const USER_AGENT = 'train-live-prototype/0.1 (rail map prototype)';
+const USER_AGENT = 'every-train/0.1 (+https://github.com/simpleapples/every-train)';
 // Fallback running speed (excluding stops) and station dwell per network.
 const MODE_DEFAULTS: Record<TflMode, { speedKmh: number; dwellS: number }> = {
   tube: { speedKmh: 40, dwellS: 30 },

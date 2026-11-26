@@ -16,7 +16,7 @@ import Pbf from 'pbf';
 import { buildGraph, type LonLat } from './lib/graph.ts';
 
 const TILEJSON_URL = 'https://tiles.openfreemap.org/planet';
-const USER_AGENT = 'train-live-prototype/0.1 (rail map prototype)';
+const USER_AGENT = 'every-train/0.1 (+https://github.com/simpleapples/every-train)';
 const ZOOM = Number(process.env.TRACK_ZOOM ?? 10);
 const CACHE_DIR = new URL(`../data/cache/openfreemap-z${ZOOM}/`, import.meta.url);
 const OUT = new URL('../data/track.json.gz', import.meta.url);

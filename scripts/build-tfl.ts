@@ -14,7 +14,7 @@ import { buildGraph, type LonLat } from './lib/graph.ts';
 
 try { process.loadEnvFile(); } catch { /* no .env file */ }
 
-const USER_AGENT = 'train-live-prototype/0.1 (rail map prototype)';
+const USER_AGENT = 'every-train/0.1 (+https://github.com/simpleapples/every-train)';
 const TFL = 'https://api.tfl.gov.uk';
 const KEY = process.env.TFL_APP_KEY ? `app_key=${process.env.TFL_APP_KEY}` : '';
 const MODES = ['tube', 'dlr', 'overground', 'elizabeth-line'];

@@ -31,7 +31,7 @@ describe('HTTP server', () => {
     const res = await fetch(`${base}/`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
-    expect(await res.text()).toContain('UK Live Trains');
+    expect(await res.text()).toContain('Every Train');
   });
 
   it('returns a train snapshot', async () => {
