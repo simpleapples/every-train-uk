@@ -55,6 +55,12 @@ describe('station search', () => {
     expect(r.find((m) => m.id === 'E')!.expected).toBe(at(8, 25));
   });
 
+  it('keeps a train held short of the station on its board, however late', () => {
+    // Due at 8:00, reported running 1 min late, still not there at 8:20.
+    const held = [{ view: view('H', 1), stops: [stop('Reading', true, at(7, 58), at(8, 0), { passed: false }), stop('Oxford', true, at(8, 30))] }];
+    expect(searchByStation('reading', held, at(8, 20)).map((m) => [m.id, m.state])).toEqual([['H', 'due']]);
+  });
+
   it('uses a predicted time where there is one (TfL)', () => {
     const tube = [{ view: view('T'), stops: [stop('Leyton', true, at(8, 4), undefined, { expected: at(8, 4) }), stop('Stratford', true, at(8, 7), undefined, { expected: at(8, 7) })] }];
     expect(searchByStation('leyton', tube, at(8, 0))).toEqual([{ id: 'T', station: 'Leyton', at: at(8, 4), kind: 'dep', expected: at(8, 4), state: 'due' }]);

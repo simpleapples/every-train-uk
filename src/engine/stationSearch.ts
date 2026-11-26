@@ -19,6 +19,7 @@ export interface StationMatch {
 
 /** A stop as search sees it: the timetable's, plus how far the train has got. */
 export interface SearchStop extends PlannedStop {
+  /** True or false when the train's position is known; unset when it is not. */
   passed?: boolean;
   here?: boolean;
   /** A predicted time there (TfL), used instead of timetable plus lateness. */
@@ -27,8 +28,9 @@ export interface SearchStop extends PlannedStop {
 
 /** How far from the asked time a train still counts as that train. */
 const NEAR_MINUTES = 20;
-const MAX_RESULTS = 12;
-const MAX_GONE = 3;
+// Generous: the page drops networks that are switched off, then shows up to 3 stations of 8.
+const MAX_RESULTS = 40;
+const MAX_GONE = 6;
 /** How long a train that has gone stays on a station's board. */
 const GONE_FOR_MS = 20 * 60_000;
 const londonClock = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -67,8 +69,11 @@ export function searchByStation(query: string, trains: { view: TrainView; stops:
       const at = (last ? s.arr ?? s.dep : s.dep ?? s.arr);
       if (at === undefined) return;
       const expected = s.expected ?? at + Math.max(0, view.delayMin ?? 0) * 60_000;
-      // Not known to have passed, but well past its time: gone all the same.
-      const state = s.here ? 'here' : s.passed || expected < now - 5 * 60_000 ? 'gone' : 'due';
+      // Where the train has got to is known: trust it (a train held at a
+      // signal is still due, however late). Not known: well past its time
+      // counts as gone.
+      const gone = s.passed ?? expected < now - 5 * 60_000;
+      const state = s.here ? 'here' : gone ? 'gone' : 'due';
       let score: number;
       if (q.minute !== undefined) {
         // Nearest the time asked.

@@ -226,8 +226,17 @@ if (creds) {
 /** A rail train's timetabled stops, marking those it has passed: up to where it was last reported. */
 function railSearchStops(view: TrainView): SearchStop[] {
   const stops = plannedStops?.(view.id) ?? [];
-  const at = stops.findIndex((s) => s.key === view.from.key);
-  return stops.map((s, i) => ({ ...s, passed: at >= 0 && (i < at || (i === at && view.state !== 'stopped')), here: i === at && view.state === 'stopped' }));
+  // Where it was last reported; on a round trip the place comes up twice,
+  // so the visit timetabled nearest the report.
+  let at = -1;
+  stops.forEach((s, i) => {
+    if (s.key !== view.from.key) return;
+    const gap = (t?: number) => Math.abs((t ?? Infinity) - view.reportedAt);
+    if (at < 0 || gap(s.dep ?? s.arr) < gap(stops[at].dep ?? stops[at].arr)) at = i;
+  });
+  // Not placed in its timetable: leave it to search to judge by the clock.
+  if (at < 0) return stops;
+  return stops.map((s, i) => ({ ...s, passed: i < at || (i === at && view.state !== 'stopped'), here: i === at && view.state === 'stopped' }));
 }
 
 const app = createApp({

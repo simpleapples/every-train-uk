@@ -658,6 +658,7 @@ function setFocusStyle() {
 
 function setFollow(on) {
   following = on;
+  if (on) pendingFit = false;
   $('d-follow').setAttribute('aria-pressed', String(on));
   const t = on && selectedId && trains.get(selectedId);
   if (t) map.easeTo({ center: positionOf(t, serverNow()), zoom: Math.max(map.getZoom(), 11), padding: mapPadding(), duration: motion(600) });
@@ -787,6 +788,7 @@ function focusTrain() {
 }
 
 function fitRoute() {
+  pendingFit = false;
   if (!detail) return;
   const coords = [...detail.pathBehind, ...detail.pathAhead];
   if (coords.length < 2) return;
@@ -846,6 +848,7 @@ function setPeers(on, fit) {
   const t = selectedId && trains.get(selectedId);
   peersOn = Boolean(on && t);
   peerIds = peersOn ? peersOf(t) : new Set();
+  if (peersOn && fit) pendingFit = false;
   lastPeers = serverNow();
   $('d-peers').setAttribute('aria-pressed', String(peersOn));
   renderPeers(t);
@@ -873,8 +876,11 @@ function renderPeers(t) {
   const here = positionOf(t, now);
   const others = [...peerIds].filter((id) => id !== t.id).map((id) => trains.get(id)).filter(Boolean)
     .map((o) => ({ o, d: metres(here, positionOf(o, now)) })).sort((a, b) => a.d - b.d);
-  const what = t.mode ? `on ${theLine(t.line)}` : `${badgeOf(t).name}, same route`;
-  const head = `<div class="lsec-h">${others.length ? `${others.length + 1} trains ${escapeHtml(what)}` : `No other trains ${escapeHtml(what)} right now`}</div>`;
+  const op = badgeOf(t).name;
+  const text = t.mode
+    ? (others.length ? `${others.length + 1} trains on ${theLine(t.line)}` : `No other trains on ${theLine(t.line)} right now`)
+    : (others.length ? `${others.length + 1} ${op} trains on this route` : `No other ${op} trains on this route right now`);
+  const head = `<div class="lsec-h">${escapeHtml(text)}</div>`;
   const rows = others.slice(0, 10).map(({ o, d }) => `<div class="n-row" data-id="${escapeHtml(o.id)}" role="button" tabindex="0">${badgeHtml(badgeOf(o), 'fixed')}`
     + `<span class="n-main"><span class="n-title">${escapeHtml(shortText(o))}</span><span class="n-where">${escapeHtml(whereLabel(o))}</span></span>`
     + `<span class="n-dist">${fmtDistance(d)}</span></div>`).join('');
@@ -981,7 +987,8 @@ function renderCalls(d, t, now) {
       // Left: the timetable. Right: minutes late or early against it, as
       // reported where it has been; still to come, only when it is late.
       left = hhmm(planned);
-      if (actual && planned) [right, rclass] = devLabel(Math.round((actual - planned) / 60_000));
+      const dev = deviationOf(s);
+      if (dev !== null) [right, rclass] = devLabel(Math.round(dev / 60_000));
       else if (s.status === 'upcoming' && planned && t.delayMin > 0) [right, rclass] = devLabel(t.delayMin);
     }
     const cls = [s.status, i === 0 && 'first', i === stops.length - 1 && 'last', i === here && 'here', i === next && 'next'].filter(Boolean).join(' ');
@@ -1060,20 +1067,29 @@ function searchResults(query) {
   const q = query.trim().toLowerCase();
   const timed = TIME_IN_QUERY.test(query);
   const calls = stationHits.map((hit) => ({ t: trains.get(hit.id), hit })).filter((r) => r.t && visible(r.t));
-  const onBoard = new Set(calls.map((r) => r.t.id));
-  const local = timed ? [] : searchTrains(query).filter((t) => !onBoard.has(t.id)).map((t) => ({ t }));
   const boards = new Map();
   for (const r of calls) boards.set(r.hit.station, [...(boards.get(r.hit.station) ?? []), r]);
-  // The station named just as typed first, then in the server's order (soonest train first).
+  // The station named just as typed, then names starting with it, busiest first.
   const plain = q.replace(TIME_IN_QUERY, '').trim();
+  const rank = (name) => (name.toLowerCase() === plain ? 2 : name.toLowerCase().startsWith(plain) ? 1 : 0);
   const stations = [...boards]
-    .sort(([a], [b]) => Number(b.toLowerCase() === plain) - Number(a.toLowerCase() === plain))
+    .sort(([a, x], [b, y]) => rank(b) - rank(a) || y.length - x.length)
     .slice(0, 3)
     .map(([name, items]) => ({ title: name, items: items.slice(0, 8) }));
+  const onBoard = new Set(stations.flatMap((sec) => sec.items.map((r) => r.t.id)));
+  const local = timed ? [] : searchTrains(query).filter((t) => !onBoard.has(t.id)).map((t) => ({ t }));
   const found = local.length ? [{ title: stations.length ? 'Trains' : '', items: local.slice(0, stations.length ? 4 : 8) }] : [];
   const headcode = local.some(({ t }) => t.headcode?.toLowerCase() === q);
   resultSections = headcode ? [...found, ...stations] : [...stations, ...found];
   return resultSections.flatMap((sec) => sec.items);
+}
+
+/** How late (ms; negative: early) it was at a stop: departure against departure, else arrival against arrival. */
+function deviationOf(s) {
+  if (s.actualDep && s.plannedDep) return s.actualDep - s.plannedDep;
+  const plannedArr = s.plannedArr ?? s.plannedDep;
+  if (s.actualArr && plannedArr) return s.actualArr - plannedArr;
+  return null;
 }
 
 /** Against the timetable: "+3 min" late, "−1 min" early, or "On time". */
@@ -1120,8 +1136,11 @@ function lookUpStations(query) {
     } catch { /* the local matches stand */ }
     if (input.value.trim() !== q) return;
     stationPending = false;
+    // The boards go in above the trains found by name: keep the highlight on the same train.
+    const highlighted = results[activeResult]?.t.id;
     results = searchResults(q);
-    activeResult = results.length ? Math.max(0, activeResult) : -1;
+    const same = results.findIndex((r) => r.t.id === highlighted);
+    activeResult = results.length ? Math.max(0, same) : -1;
     renderSearch();
   }, 200);
 }
@@ -1202,7 +1221,7 @@ input.addEventListener('keydown', (e) => {
     renderSearch();
   } else if (e.key === 'Enter') {
     e.preventDefault();
-    const r = input.value.trim() && results[Math.max(0, activeResult)];
+    const r = input.value.trim() && results[Math.min(Math.max(0, activeResult), results.length - 1)];
     if (r) choose(r.t.id);
   } else if (e.key === 'Escape') {
     e.stopPropagation();
@@ -1290,13 +1309,15 @@ function render() {
   // Lists that redraw as numbers change hold still while a button or row is
   // pressed, or the press and release land on different elements and the click is lost.
   if (!pressing) {
-    if (sheetMode === 'nearby' && now - lastNearby > 1000) renderNearby();
+    if (sheetMode === 'nearby' && now - lastNearby > 1000 && !inUse($('n-list'))) renderNearby();
     if (layersOpen && now - lastLayers > 2000) renderLayers();
-    if (peersOn && now - lastPeers > 2000) setPeers(true, false);
+    if (peersOn && now - lastPeers > 2000 && !inUse($('d-peers-list'))) setPeers(true, false);
   }
 }
 
 let pressing = false;
+/** A list being read or used: pointer over it, or keyboard focus in it. */
+const inUse = (el) => el.matches(':hover') || el.contains(document.activeElement);
 document.addEventListener('pointerdown', () => { pressing = true; }, { capture: true, passive: true });
 for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, () => { pressing = false; }, { capture: true, passive: true });
 

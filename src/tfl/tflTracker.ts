@@ -251,8 +251,9 @@ export class TflTracker implements TrainSource {
     const { view, route, here } = train;
     const paths = this.#paths(view.line!);
     return route.map((key, i) => {
-      const expected = train.expected.get(key);
       const standing = i === here && view.state !== 'moving';
+      // Standing at a station TfL no longer predicts: it is there now.
+      const expected = train.expected.get(key) ?? (standing ? Date.now() : undefined);
       return { key, name: paths.place(key)?.name ?? key, call: true, arr: expected, expected, passed: i < here || (i === here && !standing), here: standing };
     });
   }
