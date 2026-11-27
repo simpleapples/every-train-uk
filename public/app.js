@@ -523,13 +523,16 @@ function shortStock(stock) {
 function metaHtml(t, s) {
   if (!s) return '';
   const color = badgeOf(t).color;
-  const art = s.kind ? `<svg class="mini-art" viewBox="0 0 112 26" style="color:${escapeHtml(color)}" aria-hidden="true"><g fill="currentColor">${trainArt(s, t.freight)}</g></svg>` : '';
-  const parts = [];
-  if (s.stock) parts.push(`<span data-tip="${escapeHtml(s.stock)}">${escapeHtml(shortStock(s.stock))}</span>`);
-  if (s.maxMph) parts.push(`<span data-tip="Timetabled top speed">Max ${fmtSpeed(s.maxMph * KMH_PER_MPH)}</span>`);
-  if (s.tonnes) parts.push(`<span>${s.tonnes.toLocaleString('en-GB')} t</span>`);
+  // Each item brings the "·" before it; .m-list hides the one starting a line,
+  // so a wrapped line never ends or starts with a dot.
+  const items = [];
+  if (s.kind) items.push(`<span class="m-item m-art"><svg class="mini-art" viewBox="0 0 112 26" style="color:${escapeHtml(color)}" aria-hidden="true"><g fill="currentColor">${trainArt(s, t.freight)}</g></svg></span>`);
+  if (s.stock) items.push(`<span class="m-item" data-tip="${escapeHtml(s.stock)}">${escapeHtml(shortStock(s.stock))}</span>`);
+  if (s.maxMph) items.push(`<span class="m-item" data-tip="Timetabled top speed">Max ${fmtSpeed(s.maxMph * KMH_PER_MPH)}</span>`);
+  if (s.tonnes) items.push(`<span class="m-item">${s.tonnes.toLocaleString('en-GB')} t</span>`);
   const facilities = facilitiesHtml(s.features);
-  return art + parts.join('<span class="m-sep">·</span>') + (facilities ? `<span class="m-fac">${facilities}</span>` : '');
+  if (facilities) items.push(`<span class="m-item m-fac">${facilities}</span>`);
+  return items.length ? `<span class="m-list">${items.join('')}</span>` : '';
 }
 
 function detailFor(t) {
@@ -757,16 +760,8 @@ function drawRouteLine(now) {
   source.setData({ type: 'FeatureCollection', features });
 }
 
-/** The first `m` metres of a line. */
-function stretch(coords, m) {
-  const out = [];
-  let done = 0;
-  for (let i = 0; i < coords.length && done < m; i++) {
-    if (i) done += metres(coords[i - 1], coords[i]);
-    out.push(coords[i]);
-  }
-  return out;
-}
+/** The first `m` metres of a line, cut exactly there (a long gap can't drag in a far point). */
+const stretch = (coords, m) => (coords.length ? splitLine(coords, m)[0] : []);
 
 /**
  * A picked train: close in on it, with a little of the line behind and a

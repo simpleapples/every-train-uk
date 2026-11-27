@@ -34,6 +34,17 @@ describe('HTTP server', () => {
     expect(await res.text()).toContain('Every Train UK');
   });
 
+  it('gives the page scripts and styles URLs that change with their content', async () => {
+    const html = await (await fetch(`${base}/`)).text();
+    const script = html.match(/src="(\/app\.js\?v=[0-9a-f]{10})"/)?.[1];
+    expect(script).toBeDefined();
+    expect(html).toMatch(/href="\/style\.css\?v=[0-9a-f]{10}"/);
+    expect(html).not.toMatch(/(src|href)="\/[\w.-]+\.(js|css)"/);
+    const res = await fetch(`${base}${script}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('javascript');
+  });
+
   it('returns a train snapshot', async () => {
     const body = (await (await fetch(`${base}/api/trains`)).json()) as { trains: object[] };
     expect(body.trains.length).toBeGreaterThan(100);

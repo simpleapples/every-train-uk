@@ -1,6 +1,7 @@
 // HTTP server: static map page, JSON snapshot and a Server-Sent Events stream
 // that pushes train changes once a second.
 
+import { createHash } from 'node:crypto';
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -35,6 +36,25 @@ const MAX_PATHS_PER_REQUEST = 200;
 interface StreamClient {
   res: http.ServerResponse;
   out: Writable;
+}
+
+/**
+ * The page with each of its own files' URLs carrying a hash of the file
+ * ("/app.js?v=3f2a…"). A proxy in front (Cloudflare) can tell browsers to keep
+ * scripts for hours whatever this server says; a new URL on every change means
+ * a new page never runs with an old script or stylesheet.
+ */
+async function withAssetVersions(html: string, root: string): Promise<string> {
+  const ref = /\b(src|href)="\/([\w.-]+)"/g;
+  const versions = new Map<string, string>();
+  for (const name of new Set(Array.from(html.matchAll(ref), (m) => m[2]))) {
+    try {
+      versions.set(name, createHash('sha1').update(await readFile(path.join(root, name))).digest('hex').slice(0, 10));
+    } catch {
+      // Not a file here: leave its URL alone.
+    }
+  }
+  return html.replace(ref, (all, attr: string, name: string) => (versions.has(name) ? `${attr}="/${name}?v=${versions.get(name)}"` : all));
 }
 
 const acceptsGzip = (req: http.IncomingMessage) => /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
@@ -193,6 +213,7 @@ export function createApp({ feed, store, sources = [], publicDir, pushIntervalMs
     }
     try {
       let body = await readFile(file);
+      if (rel === '/index.html') body = Buffer.from(await withAssetVersions(body.toString('utf8'), root));
       const type = CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream';
       // no-cache: make browsers revalidate so a changed page or script is never stale.
       const headers: http.OutgoingHttpHeaders = { 'Content-Type': type, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' };
