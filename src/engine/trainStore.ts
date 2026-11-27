@@ -91,6 +91,8 @@ export interface HistoryEntry {
   dep?: number;
   pass: boolean;
   delayMin: number;
+  /** The platform it reported at here, when TRUST gives one. */
+  platform?: string;
 }
 
 interface TrainRecord {
@@ -482,11 +484,13 @@ export class TrainStore {
     const key = body.loc_stanox;
     if (!key) return;
     const arriving = body.event_type === 'ARRIVAL';
+    const platform = body.platform?.trim() || undefined;
     const last = rec.history.at(-1);
     if (last?.key === key) {
       if (arriving) last.arr = at;
       else last.dep = at;
       last.delayMin = delayMin;
+      if (platform) last.platform = platform;
       return;
     }
     const entry: HistoryEntry = {
@@ -496,6 +500,7 @@ export class TrainStore {
       dep: arriving ? undefined : at,
       pass: body.planned_event_type === 'PASS',
       delayMin,
+      ...(platform && { platform }),
     };
     rec.history.push(entry);
     if (rec.history.length > MAX_HISTORY) rec.history.shift();

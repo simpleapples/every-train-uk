@@ -61,6 +61,22 @@ describe('describeTrain', () => {
     expect(d.pathAhead).toEqual([[-0.21, 51.9], [-0.26, 51.95], [-0.25, 52.57]]);
   });
 
+  it("gives each stop its platform: the one reported there, else the timetable's", () => {
+    const planned = plan.map((p) => (p.key === 'KNGX' ? { ...p, platform: '4' } : p.key === 'STEVNGE' ? { ...p, platform: '2' } : p.key === 'PBRO' ? { ...p, platform: '1' } : p));
+    const store = new TrainStore(locations);
+    store.apply(move({ loc_stanox: 'KNGX', platform: ' 4', next_report_stanox: 'STEVNGE', next_report_run_time: '20', actual_timestamp: String(T0) }), T0);
+    store.apply(move({ event_type: 'ARRIVAL', loc_stanox: 'STEVNGE', platform: '3', actual_timestamp: String(T0 + 20 * 60_000) }), T0);
+    // The departure from the same platform gives none; the arrival's stays.
+    store.apply(move({ loc_stanox: 'STEVNGE', platform: '', next_report_stanox: 'HITCHIN', next_report_run_time: '4', actual_timestamp: String(T0 + 21 * 60_000) }), T0);
+    const d = describeTrain(ID, store, locations, paths, () => planned)!;
+    expect(d.stops.map((s) => [s.key, s.platform, s.platformChanged])).toEqual([
+      ['KNGX', '4', undefined],
+      ['STEVNGE', '3', true],
+      ['HITCHIN', undefined, undefined],
+      ['PBRO', '1', undefined],
+    ]);
+  });
+
   it('marks the stop a train is standing at as current', () => {
     const store = new TrainStore(locations);
     store.apply(move({ event_type: 'ARRIVAL', loc_stanox: 'STEVNGE', actual_timestamp: String(T0 + 20 * 60_000) }), T0);

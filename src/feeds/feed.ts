@@ -15,6 +15,8 @@ export interface PlannedStop {
   call: boolean;
   arr?: number;
   dep?: number;
+  /** The platform the timetable plans for the train here ("3", "1A"). */
+  platform?: string;
   /**
    * Engineering, pathing and performance allowances: time the timetable pads
    * into the run from here to the next location, beyond what the train needs.

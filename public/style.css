@@ -489,7 +489,7 @@ button { font: inherit; color: inherit; }
 .calls { list-style: none; margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--border); }
 .call {
   display: grid;
-  grid-template-columns: 44px 20px minmax(0, 1fr) auto;
+  grid-template-columns: 44px 20px minmax(0, 1fr) auto auto;
   align-items: center;
   min-height: 28px;
   font-variant-numeric: tabular-nums;
@@ -508,6 +508,9 @@ button { font: inherit; color: inherit; }
 .call.next .c-name, .call.here .c-name { font-weight: 650; }
 .c-name { padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-rt { font-size: var(--fs-sm); color: var(--text-3); padding-left: 8px; white-space: nowrap; }
+.c-plat { margin-left: 8px; padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; font-size: var(--fs-xs, 12px); line-height: 18px; color: var(--text-2); white-space: nowrap; cursor: default; }
+.call.passed .c-plat { color: var(--text-3); }
+.c-plat.changed { color: var(--warn-text); border-color: currentColor; font-weight: 600; }
 .c-rt.late, .c-rt.early { font-weight: 600; }
 .c-nopos { width: 13px; height: 13px; margin-left: 6px; vertical-align: -2px; fill: none; stroke: var(--text-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 /* The train: a small marker on the rail between the stop behind it and the next. */

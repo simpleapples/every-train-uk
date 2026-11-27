@@ -15,6 +15,8 @@ export interface StationMatch {
   expected: number;
   /** gone: it has called there already; here: standing there now; due: still to come. */
   state: 'gone' | 'here' | 'due';
+  /** Its platform there, when known. */
+  platform?: string;
 }
 
 /** A stop as search sees it: the timetable's, plus how far the train has got. */
@@ -85,7 +87,7 @@ export function searchByStation(query: string, trains: { view: TrainView; stops:
         // have just called there, most recent first.
         score = state === 'gone' ? 1e9 + (now - expected) : expected - now;
       }
-      if (!best || score < best.score) best = { id: view.id, station: s.name!, at, kind: last ? 'arr' : 'dep', expected, state, score };
+      if (!best || score < best.score) best = { id: view.id, station: s.name!, at, kind: last ? 'arr' : 'dep', expected, state, score, ...(s.platform && { platform: s.platform }) };
     });
     if (best) matches.push(best);
   }

@@ -10,7 +10,7 @@ const MIN = 60_000;
 const tiploc = (code: string, stanox: string | null, desc: string) =>
   JSON.stringify({ TiplocV1: { transaction_type: 'Create', tiploc_code: code, stanox, tps_description: desc } });
 
-interface Loc { tiploc: string; arr?: string; dep?: string; pass?: string; pub?: boolean; eng?: string; path?: string; perf?: string }
+interface Loc { tiploc: string; arr?: string; dep?: string; pass?: string; pub?: boolean; eng?: string; path?: string; perf?: string; plat?: string }
 function schedule(o: { uid: string; stp?: string; atoc?: string; headcode?: string; start?: string; end?: string; days?: string; locs?: Loc[]; segment?: Record<string, string | null> }) {
   return JSON.stringify({
     JsonScheduleV1: {
@@ -33,6 +33,7 @@ function schedule(o: { uid: string; stp?: string; atoc?: string; headcode?: stri
           engineering_allowance: l.eng ?? null,
           pathing_allowance: l.path ?? null,
           performance_allowance: l.perf ?? null,
+          platform: l.plat ?? null,
         })),
       },
     },
@@ -90,7 +91,7 @@ describe('Timetable', () => {
         schedule_location: [
           { scheduled_departure_time: '130000', public_departure_time: ' ', CIF_pathing_allowance: ' H', CIF_engineering_allowance: ' ', location: { tiploc: { tiploc_id: 'KNGX' } } },
           { scheduled_pass_time: '131530', location: { tiploc: { tiploc_id: 'WYMONDJ' } } },
-          { scheduled_arrival_time: '132000', location: { tiploc: { tiploc_id: 'STEVNGE' } } },
+          { scheduled_arrival_time: '132000', CIF_platform: '4 ', location: { tiploc: { tiploc_id: 'STEVNGE' } } },
         ],
       }],
     });
@@ -103,6 +104,7 @@ describe('Timetable', () => {
       expect(t.plannedStops('43876', DAY)?.map((s) => [s.key, s.call])).toEqual([['87701', true], ['86099', false], ['86021', true]]);
       // VSTP pads its allowances with spaces.
       expect(t.plannedStops('43876', DAY)?.map((s) => s.allowanceMs)).toEqual([30_000, undefined, undefined]);
+      expect(t.plannedStops('43876', DAY)?.map((s) => s.platform)).toEqual([undefined, undefined, '4']);
     });
 
     it('removes one again when it is deleted', async () => {
@@ -138,6 +140,15 @@ describe('Timetable', () => {
     expect(stops[0].dep).toBe(NOON);
     expect(stops[1].dep).toBe(NOON + 15.5 * MIN);
     expect(stops[2]).toMatchObject({ arr: NOON + 19 * MIN, dep: NOON + 20 * MIN });
+  });
+
+  it('keeps the platform planned at each location', async () => {
+    const locs: Loc[] = [{ ...LNER_LOCS[0], plat: '1A' }, LNER_LOCS[1], { ...LNER_LOCS[2], plat: '' }, { ...LNER_LOCS[3], plat: '3' }, LNER_LOCS[4]];
+    const t = await load([schedule({ uid: 'C10001', locs }), schedule({ uid: 'C10002', headcode: '1S14', locs: [{ ...LNER_LOCS[0], plat: '3' }, ...LNER_LOCS.slice(1)] })]);
+    expect(t.plannedStops('C10001', DAY)!.map((s) => s.platform)).toEqual(['1A', undefined, undefined, '3', undefined]);
+    expect(t.plannedStops('C10002', DAY)![0].platform).toBe('3');
+    // Times and calls are where they were.
+    expect(t.plannedStops('C10001', DAY)!.map((s) => s.call)).toEqual([true, false, true, true, false]);
   });
 
   it('adds up the allowances timed into the run on from each location', async () => {

@@ -45,13 +45,14 @@ interface Schedule {
   service?: ServiceCodes;
   /**
    * Per location, STRIDE ints: key index, arrival, departure, pass
-   * (half-minutes after the date's midnight, -1 if none), calls (1/0), and
-   * the allowances timed into the run on to the next location (half-minutes).
+   * (half-minutes after the date's midnight, -1 if none), calls (1/0), the
+   * allowances timed into the run on to the next location (half-minutes),
+   * and the planned platform (index into the timetable's list; 0 if none).
    */
   stops: Int32Array;
 }
 
-const STRIDE = 6;
+const STRIDE = 7;
 const NONE = -1;
 // Overlays and new short-term schedules replace the permanent one for a day;
 // a cancellation removes it.
@@ -75,6 +76,7 @@ interface CifLocation {
   engineering_allowance?: string | null;
   pathing_allowance?: string | null;
   performance_allowance?: string | null;
+  platform?: string | null;
 }
 
 interface CifSchedule {
@@ -124,6 +126,7 @@ export interface VstpSchedule {
       CIF_engineering_allowance?: string | null;
       CIF_pathing_allowance?: string | null;
       CIF_performance_allowance?: string | null;
+      CIF_platform?: string | null;
       location?: { tiploc?: { tiploc_id?: string } };
     }>;
   }>;
@@ -138,6 +141,9 @@ export class Timetable implements ScheduleLookup {
   readonly dates: readonly string[];
   #keys: string[] = [];
   #keyIndex = new Map<string, number>();
+  // Platform names, shared by every schedule; 0 stands for none.
+  #platforms: string[] = [''];
+  #platformIndex = new Map<string, number>();
   #names = new Map<string, string>();
   #byUid = new Map<string, Schedule>();
   #byHeadcode = new Map<string, Schedule[]>();
@@ -297,6 +303,7 @@ export class Timetable implements ScheduleLookup {
         arr: arr === NONE ? undefined : londonTime(s.date, arr),
         dep: dep !== NONE ? londonTime(s.date, dep) : pass !== NONE ? londonTime(s.date, pass) : undefined,
         ...(s.stops[i + 5] > 0 && { allowanceMs: s.stops[i + 5] * 30_000 }),
+        ...(s.stops[i + 6] > 0 && { platform: this.#platforms[s.stops[i + 6]] }),
       });
     }
     return out;
@@ -333,6 +340,17 @@ export class Timetable implements ScheduleLookup {
     return k;
   }
 
+  #platformOf(v: string | null | undefined): number {
+    const name = v?.trim();
+    if (!name) return 0;
+    let p = this.#platformIndex.get(name);
+    if (p === undefined) {
+      p = this.#platforms.push(name) - 1;
+      this.#platformIndex.set(name, p);
+    }
+    return p;
+  }
+
   #pack(locations: CifLocation[]): Int32Array {
     // Passenger trains: calls are the stops with public times. Others
     // (empty stock, freight) have none; their calls are where they stop.
@@ -358,7 +376,7 @@ export class Timetable implements ScheduleLookup {
         ? isPublic(l.public_arrival) || isPublic(l.public_departure)
         : pass === NONE && (arr !== NONE || dep !== NONE);
       const allowance = parseAllowance(l.engineering_allowance) + parseAllowance(l.pathing_allowance) + parseAllowance(l.performance_allowance);
-      out.set([this.#keyOf(this.#stanoxOf.get(tiploc) ?? tiploc), arr, dep, pass, calls ? 1 : 0, allowance], i * STRIDE);
+      out.set([this.#keyOf(this.#stanoxOf.get(tiploc) ?? tiploc), arr, dep, pass, calls ? 1 : 0, allowance, this.#platformOf(l.platform)], i * STRIDE);
     });
     return out;
   }
@@ -440,6 +458,7 @@ function fromVstp(v: VstpSchedule): CifSchedule {
         engineering_allowance: l.CIF_engineering_allowance,
         pathing_allowance: l.CIF_pathing_allowance,
         performance_allowance: l.CIF_performance_allowance,
+        platform: l.CIF_platform,
       })),
     },
   };

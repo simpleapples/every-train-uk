@@ -70,6 +70,8 @@ interface TflTrain {
   here: number;
   expected: Map<string, number>;
   missed: number;
+  /** The station TfL's platform (view.platform) is at: the one its prediction is for. */
+  platformAt?: string;
   /** For matching inferred (DLR) trains between polls. */
   match?: { group: string; prev?: string; next: string };
 }
@@ -250,11 +252,15 @@ export class TflTracker implements TrainSource {
     if (!train) return [];
     const { view, route, here } = train;
     const paths = this.#paths(view.line!);
+    const platform = platformNumber(view.platform);
     return route.map((key, i) => {
       const standing = i === here && view.state !== 'moving';
       // Standing at a station TfL no longer predicts: it is there now.
       const expected = train.expected.get(key) ?? (standing ? Date.now() : undefined);
-      return { key, name: paths.place(key)?.name ?? key, call: true, arr: expected, expected, passed: i < here || (i === here && !standing), here: standing };
+      return {
+        key, name: paths.place(key)?.name ?? key, call: true, arr: expected, expected, passed: i < here || (i === here && !standing), here: standing,
+        ...(platform && key === train.platformAt && { platform }),
+      };
     });
   }
 
@@ -263,6 +269,7 @@ export class TflTracker implements TrainSource {
     if (!train) return undefined;
     const { view, route, here } = train;
     const paths = this.#paths(view.line!);
+    const platform = platformNumber(view.platform);
     const stops: StopDetail[] = route.map((key, i) => {
       const place = paths.place(key);
       let status: StopDetail['status'] = i <= here ? 'passed' : 'upcoming';
@@ -275,6 +282,7 @@ export class TflTracker implements TrainSource {
         lat: place?.lat,
         lon: place?.lon,
         expectedArr: train.expected.get(key),
+        ...(platform && key === train.platformAt && { platform }),
       };
     });
     const pathBehind: LonLat[] = [];
@@ -519,7 +527,7 @@ export class TflTracker implements TrainSource {
     }
 
     const expected = new Map(chain.map((c) => [c.key, now + c.tts * 1000]));
-    return { view, route, here, expected, missed: 0 };
+    return { view, route, here, expected, missed: 0, platformAt: meta.naptanId };
   }
 }
 
@@ -527,6 +535,12 @@ function push<T>(map: Map<string, T[]>, key: string, value: T): void {
   const list = map.get(key);
   if (list) list.push(value);
   else map.set(key, [value]);
+}
+
+/** TfL's "Westbound - Platform 1" as "1"; nothing for "Platform Unknown" or no number. */
+export function platformNumber(name: string | undefined): string | undefined {
+  const m = /\bplatform\s+([0-9]+[a-z]?)\b/i.exec(name ?? '');
+  return m?.[1].toUpperCase();
 }
 
 function lineLabel(name: string, mode: TflMode): string {

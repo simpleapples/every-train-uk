@@ -26,6 +26,10 @@ export interface StopDetail {
   actualDep?: number;
   /** Predicted arrival (Tube trains, from TfL). */
   expectedArr?: number;
+  /** The platform it used here if it reported one, else the timetable's. */
+  platform?: string;
+  /** It reported at a different platform from the timetable's. */
+  platformChanged?: boolean;
 }
 
 export interface TrainDetails {
@@ -97,6 +101,7 @@ function fromTimetable(
     status: 'upcoming',
     plannedArr: p.arr,
     plannedDep: p.dep,
+    ...(p.platform && { platform: p.platform }),
   }));
 
   // Match reports to timetable rows in order.
@@ -107,6 +112,10 @@ function fromTimetable(
     if (i < 0) continue;
     stops[i].actualArr = h.arr;
     stops[i].actualDep = h.dep;
+    if (h.platform) {
+      if (stops[i].platform && stops[i].platform !== h.platform) stops[i].platformChanged = true;
+      stops[i].platform = h.platform;
+    }
     lastMatched = i;
     from = i + 1;
   }
@@ -130,6 +139,7 @@ function fromHistory(history: readonly HistoryEntry[], view: TrainView): StopDet
     status: 'passed',
     actualArr: h.arr,
     actualDep: h.dep,
+    ...(h.platform && { platform: h.platform }),
   }));
   const last = stops.at(-1);
   if (last && view.state !== 'moving' && last.key === view.from.key) last.status = 'current';

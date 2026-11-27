@@ -512,7 +512,19 @@ function facilitiesHtml(features) {
 }
 
 /** "Class 220/221 Voyager" -> "Class 220/221"; the fleet name stays in the tooltip. */
+// The kind of train, when its class isn't known, as railways write it.
+const STOCK_SHORT = {
+  'Diesel multiple unit': 'DMU',
+  'Electric multiple unit': 'EMU',
+  'Diesel locomotive': 'Diesel loco',
+  'Electric locomotive': 'Electric loco',
+  'Electro-diesel locomotive': 'Electro-diesel loco',
+  'Electric unit and locomotive': 'EMU and loco',
+  'High Speed Train': 'HST',
+};
+
 function shortStock(stock) {
+  if (STOCK_SHORT[stock]) return STOCK_SHORT[stock];
   if (!stock.startsWith('Class ')) return stock;
   const words = stock.slice(6).split(' ').filter((w) => /^[\d/]+$/.test(w) || w === 'or');
   while (words.at(-1) === 'or') words.pop();
@@ -568,8 +580,8 @@ function loadHtml(load) {
 
 /** Platform, how busy (TfL), and the report's age once it is old. */
 function extraHtml(t, d, now) {
+  // Platforms are per stop, in the stop list.
   const parts = [];
-  if (t.platform) parts.push(`<span>${escapeHtml(t.mode ? t.platform : `Platform ${t.platform}`)}</span>`);
   if (d?.load) parts.push(loadHtml(d.load));
   if (now - t.reportedAt > 3 * 60_000) parts.push(`<span>Reported ${ago(now - t.reportedAt)}</span>`);
   return parts.join('');
@@ -796,7 +808,7 @@ function fitRoute() {
 function renderDetailHead(t) {
   setHtml($('d-title'), titleHtml(t));
   $('d-peers-label').textContent = t.mode ? 'Same line' : 'Same route';
-  $('d-peers').title = t.mode ? `Every train on ${theLine(t.line)}` : 'Trains of the same operator between the same places';
+  $('d-peers').title = t.mode ? `Every train on ${theLine(t.line)}` : 'Other trains between the same two places, either way';
   const route = $('d-route');
   if (setHtml(route, escapeHtml(routeLabel(t)))) {
     route.scrollLeft = 0;
@@ -831,10 +843,11 @@ function peersOf(t) {
     for (const o of others) if (o.line === t.line) ids.add(o.id);
     return ids;
   }
-  const ends = new Set([t.origin, t.destination].filter(Boolean));
-  const sameOp = others.filter((o) => !o.mode && o.operator === t.operator);
-  for (const o of sameOp) if (ends.size === 2 && ends.has(o.origin) && ends.has(o.destination)) ids.add(o.id);
-  if (ids.size < 3) for (const o of sameOp) if (ends.has(o.origin) || ends.has(o.destination)) ids.add(o.id);
+  // National Rail: trains between the same two places, either way, whoever
+  // runs them. Sharing only one end is a different route, so it never counts.
+  if (!t.origin || !t.destination) return ids;
+  const sameEnds = (o) => (o.origin === t.origin && o.destination === t.destination) || (o.origin === t.destination && o.destination === t.origin);
+  for (const o of others) if (!o.mode && sameEnds(o)) ids.add(o.id);
   return ids;
 }
 
@@ -871,10 +884,12 @@ function renderPeers(t) {
   const here = positionOf(t, now);
   const others = [...peerIds].filter((id) => id !== t.id).map((id) => trains.get(id)).filter(Boolean)
     .map((o) => ({ o, d: metres(here, positionOf(o, now)) })).sort((a, b) => a.d - b.d);
-  const op = badgeOf(t).name;
+  const between = t.origin === t.destination ? `on round trips from ${t.origin}` : `between ${t.origin} and ${t.destination}`;
   const text = t.mode
     ? (others.length ? `${others.length + 1} trains on ${theLine(t.line)}` : `No other trains on ${theLine(t.line)} right now`)
-    : (others.length ? `${others.length + 1} ${op} trains on this route` : `No other ${op} trains on this route right now`);
+    : !t.origin || !t.destination ? 'Where this train runs isn’t known, so there’s nothing to match'
+    : others.length ? `${others.length} other ${others.length === 1 ? 'train' : 'trains'} ${between}`
+    : `No other trains ${between} right now`;
   const head = `<div class="lsec-h">${escapeHtml(text)}</div>`;
   const rows = others.slice(0, 10).map(({ o, d }) => `<div class="n-row" data-id="${escapeHtml(o.id)}" role="button" tabindex="0">${badgeHtml(badgeOf(o), 'fixed')}`
     + `<span class="n-main"><span class="n-title">${escapeHtml(shortText(o))}</span><span class="n-where">${escapeHtml(whereLabel(o))}</span></span>`
@@ -987,14 +1002,18 @@ function renderCalls(d, t, now) {
       else if (s.status === 'upcoming' && planned && t.delayMin > 0) [right, rclass] = devLabel(t.delayMin);
     }
     const cls = [s.status, i === 0 && 'first', i === stops.length - 1 && 'last', i === here && 'here', i === next && 'next'].filter(Boolean).join(' ');
+    const plat = s.platform
+      ? `<span class="c-plat${s.platformChanged ? ' changed' : ''}" data-tip="${s.platformChanged ? 'Platform changed from the timetable' : `Platform ${escapeHtml(s.platform)}`}">Plat ${escapeHtml(s.platform)}</span>`
+      : '<span></span>';
     items.push(`<li class="call ${escapeHtml(cls)}">
       <span class="c-time">${escapeHtml(left)}</span>
       ${i === here ? trainMark : '<span class="c-dot"></span>'}
       <span class="c-name">${escapeHtml(s.name)}${s.lat === undefined && !tfl ? NO_POSITION : ''}</span>
+      ${plat}
       <span class="c-rt ${rclass}">${escapeHtml(right)}</span>
     </li>`);
     // The train itself, on the line between the stop it left and the next one.
-    if (i === between) items.push(`<li class="call now" aria-label="The train is here"><span></span>${trainMark}<span></span><span></span></li>`);
+    if (i === between) items.push(`<li class="call now" aria-label="The train is here"><span></span>${trainMark}<span></span><span></span><span></span></li>`);
   }
   $('d-calls').innerHTML = items.join('');
   const more = $('d-more');
@@ -1113,7 +1132,7 @@ function boardRow({ t, hit }, i, now) {
   return `<li class="result board ${escapeHtml(hit.state)}" role="option" id="result-${i}" data-id="${escapeHtml(t.id)}" aria-selected="${i === activeResult}">`
     + `<span class="b-time"><b>${escapeHtml(time)}</b>${tfl ? '' : `<small>${arr ? 'arr' : 'dep'}</small>`}</span>`
     + `<span class="r-main"><span class="r-title">${badgeHtml(badgeOf(t))}<span class="short-text">${escapeHtml(where)}</span></span>`
-    + `<span class="r-sub">${escapeHtml(tfl ? status : `${status} · ${t.headcode}`)}</span></span>`
+    + `<span class="r-sub">${escapeHtml([status, hit.platform && `Plat ${hit.platform}`, !tfl && t.headcode].filter(Boolean).join(' · '))}</span></span>`
     + `<span class="b-dev ${devClass}">${escapeHtml(dev)}</span></li>`;
 }
 

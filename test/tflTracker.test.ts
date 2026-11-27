@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LocationIndex } from '../src/engine/locations.ts';
 import { PathService } from '../src/engine/paths.ts';
-import { type TflData, type TflPrediction, TflTracker } from '../src/tfl/tflTracker.ts';
+import { platformNumber, type TflData, type TflPrediction, TflTracker } from '../src/tfl/tflTracker.ts';
 
 // Four-station lines, A-B-C-D, roughly 1 km apart (no track data, so
 // straight-line distances).
@@ -88,6 +88,16 @@ describe('TflTracker: trains with numbers', () => {
     expect(d.pathAhead.length).toBeGreaterThan(1);
     // The line's trains.
     expect(d.service).toMatchObject({ stock: '1992 Stock', kind: 'tube' });
+  });
+
+  it("puts TfL's platform on the station its prediction is for", () => {
+    const t = tracker();
+    t.update([pred('C', 60, { platformName: 'Eastbound - Platform 2' }), pred('D', 180)], NOW);
+    expect(t.describe('TFL-central-261')!.stops.map((s) => s.platform)).toEqual([undefined, undefined, '2', undefined]);
+    expect(t.searchStops('TFL-central-261').map((s) => s.platform)).toEqual([undefined, undefined, '2', undefined]);
+    expect(platformNumber('Westbound - Platform 10a')).toBe('10A');
+    expect(platformNumber('Platform Unknown')).toBeUndefined();
+    expect(platformNumber(undefined)).toBeUndefined();
   });
 
   it('treats "Check Front of Train" as an unknown destination', () => {

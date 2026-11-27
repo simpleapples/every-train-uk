@@ -29,6 +29,12 @@ describe('station search', () => {
     expect(searchByStation('bristol 0940', trains, at(7, 0))).toEqual([{ id: 'A', station: 'Bristol Temple Meads', at: at(9, 40), kind: 'arr', expected: at(9, 40), state: 'due' }]);
   });
 
+  it("gives the train's platform at the station when known", () => {
+    const withPlatforms = [{ view: view('C'), stops: [stop('London Paddington', true, undefined, at(8, 0), { platform: '9' }), stop('Oxford', true, at(9, 0))] }];
+    expect(searchByStation('paddington', withPlatforms, at(7, 50))[0].platform).toBe('9');
+    expect(searchByStation('oxford', withPlatforms, at(7, 50))[0]).not.toHaveProperty('platform');
+  });
+
   it('matches only where the train stops, every word of the name', () => {
     // A runs through Reading without stopping.
     expect(searchByStation('reading', trains, at(8, 0)).map((m) => m.id)).toEqual(['B']);
