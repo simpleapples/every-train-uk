@@ -200,7 +200,8 @@ export class DemoFeed implements Feed {
             train_id: trainId,
             event_type: eventType,
             planned_event_type: planned,
-            actual_timestamp: String(at),
+            // Cut down to the minute, as TRUST does (the store allows for it).
+            actual_timestamp: String(Math.floor(at / MINUTE) * MINUTE),
             planned_timestamp: String(startsAt + scheduled),
             loc_stanox: stops[i].tiploc,
             next_report_stanox: next?.tiploc ?? null,

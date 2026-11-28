@@ -49,7 +49,8 @@ describe('TrainStore', () => {
       headcode: '1S12',
       operator: 'LNER',
       state: 'moving',
-      departedAt: T0,
+      // Half a minute after TRUST's time, which it cuts down to the minute.
+      departedAt: T0 + 30_000,
       runMs: 20 * 60_000,
       delayMin: 0,
       freight: false,
@@ -299,7 +300,7 @@ describe('TrainStore', () => {
     const [t] = store.snapshot();
     // Drawn from Kings Cross (the junction has no coordinates), so timed from
     // when it left there: 5 min to the junction plus 8 min on to Stevenage.
-    expect(t).toMatchObject({ state: 'moving', departedAt: T0, runMs: 13 * 60_000 });
+    expect(t).toMatchObject({ state: 'moving', departedAt: T0 + 30_000, runMs: 13 * 60_000 });
     expect(t.from.name).toBe('London Kings Cross');
     expect(t.to?.name).toBe('Stevenage');
   });
@@ -564,6 +565,12 @@ describe('TrainStore', () => {
       store.apply(movement({ event_type: 'ARRIVAL', planned_event_type: 'ARRIVAL', loc_stanox: '70011', actual_timestamp: String(T0 + 45 * 60_000), next_report_stanox: '' }), T0 + 45 * 60_000);
       expect(store.stats.predictions).toMatchObject({ runs: 0, elsewhere: 1 });
     });
+  });
+
+  it('draws a train from when its report came when TRUST gives no time', () => {
+    const store = new TrainStore(index);
+    store.apply(movement({ actual_timestamp: null }), T0 + 7000);
+    expect(store.snapshot()[0].departedAt).toBe(T0 + 7000);
   });
 
   it('only sends each change once', () => {

@@ -144,6 +144,11 @@ const PLANNED_TOLERANCE_MS = 2 * 60_000;
 // TRUST timestamps have been seen in UK local time rather than UTC, which
 // puts them an hour in the future during BST.
 const BST_SKEW_MS = 60 * 60_000;
+// TRUST cuts its times down to the minute: against the train describer steps
+// they come from, 99% are 0 to 59 seconds before the event. So an event
+// happened half a minute after its stamp, on average, and a train is drawn
+// from then. Times shown in its stops stay TRUST's own.
+export const ROUNDED_DOWN_MS = 30_000;
 
 // Headcode first digit 0/3/4/5/6/7/8 is light engines, empty stock or freight.
 const NON_PASSENGER_CLASSES = new Set(['0', '3', '4', '5', '6', '7', '8']);
@@ -361,9 +366,12 @@ export class TrainStore {
     if (body.toc_id) rec.toc = body.toc_id;
 
     const at = trustTime(body.actual_timestamp, receivedAt);
+    // Without a stamp of TRUST's own, `at` is when the report came: not cut down.
+    const stamp = Number(body.actual_timestamp);
+    const happened = Number.isFinite(stamp) && stamp > 0 ? at + ROUNDED_DOWN_MS : at;
     const delayMin = delayOf(body);
     // The first report from somewhere new ends the run the train was drawn on.
-    if (rec.view?.state === 'moving' && body.loc_stanox && rec.history.at(-1)?.key !== body.loc_stanox) this.#score(rec, rec.view, body.loc_stanox, at);
+    if (rec.view?.state === 'moving' && body.loc_stanox && rec.history.at(-1)?.key !== body.loc_stanox) this.#score(rec, rec.view, body.loc_stanox, at, happened);
     this.#record(rec, body, at, delayMin);
     rec.nextKey = body.next_report_stanox || undefined;
     this.#findSchedule(rec, body, receivedAt);
@@ -391,7 +399,7 @@ export class TrainStore {
       delayMin,
       platform: body.platform?.trim() || undefined,
       reportedAt: at,
-      departedAt: at,
+      departedAt: happened,
       measuredKmh: capped(rec.measured?.kmh, topKmhOf(rec)),
       measuredSection: rec.measured?.section,
       topKmh: topKmhOf(rec),
@@ -413,10 +421,11 @@ export class TrainStore {
       // From an unplaced junction the train is drawn from the last place we
       // can draw: time the run from when it left there (not from the
       // junction), so it carries on instead of jumping back, at a true speed.
-      let departedAt = at;
+      let departedAt = happened;
       if (!placed) {
         const left = rec.history.findLast((h) => h.key === here.key);
-        departedAt = Math.min(at, left?.dep ?? left?.arr ?? (rec.view?.state === 'moving' ? rec.view.departedAt : at));
+        const leftAt = left?.dep ?? left?.arr;
+        departedAt = Math.min(happened, leftAt !== undefined ? leftAt + ROUNDED_DOWN_MS : rec.view?.state === 'moving' ? rec.view.departedAt : happened);
       }
       const section = this.#sectionPlan(rec, body.loc_stanox, plannedTime(body, receivedAt), next.key);
       // A late train can make up the time the timetable pads into the run
@@ -440,7 +449,7 @@ export class TrainStore {
       const learnedMs = this.#runTimes?.estimate(leg)?.ms;
       // Halfway between the two: on a sample of runs, closer than either alone
       // (the status keeps scoring all three, so this can be checked).
-      const runMs = at + (learnedMs === undefined ? timetableMs : (timetableMs + learnedMs) / 2) - departedAt;
+      const runMs = happened + (learnedMs === undefined ? timetableMs : (timetableMs + learnedMs) / 2) - departedAt;
       rec.timing = { leg, from: at, timetableMs, ...(learnedMs !== undefined && { learnedMs }) };
       rec.view = { ...base, departedAt, state: 'moving', to: next, runMs, motion, speedKmh: capped(this.#speedKmh(here.key, next.key, runMs), base.topKmh) };
     } else if (placed && !passing) {
@@ -545,8 +554,8 @@ export class TrainStore {
     this.#measure(rec, key, at);
   }
 
-  /** How far off the run the train was drawn on was, now it reports at `key`. */
-  #score(rec: TrainRecord, was: TrainView, key: string, at: number): void {
+  /** How far off the run the train was drawn on was, now it reports at `key` (at TRUST's `at`, so `happened`). */
+  #score(rec: TrainRecord, was: TrainView, key: string, at: number, happened: number): void {
     const t = rec.timing;
     // Only a run planned since the server started, not one brought back
     // across a restart (it may have ended while nobody was listening).
@@ -556,10 +565,13 @@ export class TrainStore {
       if (rec.history.at(-1)?.key !== t.leg.to) this.#predictions.elsewhere(at);
       return;
     }
-    const offMs: ScoredRun['offMs'] = { shown: at - (was.departedAt + was.runMs), timetable: at - (t.from + t.timetableMs) };
+    // All against TRUST's times, so the half minute it cuts off comes out
+    // the same at both ends: what this can't see is the drawn train running
+    // that much ahead all the way (see ROUNDED_DOWN_MS).
+    const offMs: ScoredRun['offMs'] = { shown: happened - (was.departedAt + was.runMs), timetable: at - (t.from + t.timetableMs) };
     if (t.learnedMs !== undefined) offMs.learned = at - (t.from + t.learnedMs);
     const lengthM = this.#distance?.(was.from.key, key) ?? undefined;
-    this.#predictions.add({ at, ranMs: at - was.departedAt, offMs, ...(lengthM && { lengthM }) });
+    this.#predictions.add({ at, ranMs: happened - was.departedAt, offMs, ...(lengthM && { lengthM }) });
   }
 
   /** How long the run from one reporting point to the next took, for that section's usual time. */
