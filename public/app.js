@@ -429,12 +429,12 @@ function speedOf(t, now) {
   const v = t.speedKmh && t.motion && now !== undefined ? progressOf(t, now, sectionOf(t).lengthM).v : null;
   if (v !== null) {
     const kmh = Math.min(v * 3.6, t.topKmh ?? Infinity);
-    const from = t.mode ? 'TfL arrival predictions' : 'its scheduled running time';
+    const from = t.mode ? 'TfL arrival predictions' : 'its timetabled running time and what trains like it usually take';
     const how = `Modelled from ${from}, speeding up and braking at typical rates; ${fmtSpeed(t.speedKmh)} on average over this section.`;
     return { text: `≈ ${fmtSpeed(kmh, 5)}`, tip: [how, measured, top].filter(Boolean).join(' ') };
   }
   if (t.speedKmh) {
-    const how = t.mode ? 'Average over this section, from TfL arrival predictions.' : 'Average over this section, from its scheduled running time.';
+    const how = t.mode ? 'Average over this section, from TfL arrival predictions.' : 'Average over this section, from its timetabled running time and what trains like it usually take.';
     return { text: `≈ ${fmtSpeed(t.speedKmh)}`, tip: [how, measured, top].filter(Boolean).join(' ') };
   }
   return t.measuredKmh ? { text: fmtSpeed(t.measuredKmh), tip: [measured, top].filter(Boolean).join(' ') } : null;

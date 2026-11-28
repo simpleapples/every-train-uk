@@ -53,6 +53,8 @@ describe('RunTimes', () => {
     const back = new RunTimes();
     expect(back.importState(state)).toBe(1);
     expect(back.estimate(leg)?.ms).toBe(600_000);
-    expect(back.importState({ version: 2 } as never)).toBe(0);
+    // Version 1 had every run as stop to stop.
+    expect(back.importState({ ...state, version: 1 } as never)).toBe(0);
+    expect(back.importState({ version: 3 } as never)).toBe(0);
   });
 });

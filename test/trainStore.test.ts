@@ -430,13 +430,47 @@ describe('TrainStore', () => {
       store.apply(movement({}), T0);
       store.apply(arrive('86021', 24, '70011'), T0 + 24 * 60_000);
       store.apply(depart('86021', 26, '70011'), T0 + 26 * 60_000);
-      store.apply(movement({ event_type: 'ARRIVAL', planned_event_type: 'PASS', loc_stanox: '70011', actual_timestamp: String(T0 + 50 * 60_000) }), T0 + 50 * 60_000);
-      // No schedule yet: operator and class digit.
+      store.apply(movement({ event_type: 'ARRIVAL', planned_event_type: 'ARRIVAL', loc_stanox: '70011', actual_timestamp: String(T0 + 50 * 60_000) }), T0 + 50 * 60_000);
+      // No schedule yet: operator and class digit, and stations taken as stops.
       expect(runTimes.exportState(T0).sections).toEqual({
         '87701>86021|ss|c:61/1': [T0 + 24 * 60_000, 24 * 60],
-        '86021>70011|sp|c:61/1': [T0 + 50 * 60_000, 24 * 60],
+        '86021>70011|ss|c:61/1': [T0 + 50 * 60_000, 24 * 60],
       });
       expect(store.stats.runTimes).toEqual({ sections: 2, runs: 2 });
+    });
+
+    it('keys a run by whether the timetable has the train stop or run through, as it was planned', () => {
+      // Running through Stevenage. TRUST still reports an arrival or a departure there, planned as one.
+      for (const [event, planned] of [['ARRIVAL', 'ARRIVAL'], ['DEPARTURE', 'DEPARTURE']]) {
+        const runTimes = new RunTimes();
+        const store = new TrainStore(index, undefined, null, new Set(), runTimes);
+        store.setTimetable({
+          byUid: () => undefined,
+          match: () => ({ uid: 'C10001', date: '2026-10-31', atoc: 'GR', origin: 'London Kings Cross', destination: 'Peterborough' }),
+          plannedStops: () => [
+            { key: '87701', call: true, dep: T0 },
+            { key: '86021', call: false, dep: T0 + 20 * 60_000 },
+            { key: '70011', call: true, arr: T0 + 45 * 60_000 },
+          ],
+        });
+        store.apply(movement({ planned_timestamp: String(T0) }), T0);
+        store.apply(movement({ event_type: event, planned_event_type: planned, loc_stanox: '86021', actual_timestamp: String(T0 + 19 * 60_000), planned_timestamp: String(T0 + 20 * 60_000), next_report_stanox: '70011', next_report_run_time: '25' }), T0 + 19 * 60_000);
+        // Not drawn pulling away from a stand either.
+        expect(store.snapshot()[0].motion?.startsStopped).toBe(false);
+        store.apply(arrive('70011', 43, ''), T0 + 43 * 60_000);
+        expect(Object.keys(runTimes.exportState(T0).sections)).toEqual(['87701>86021|sp|c:61/1', '86021>70011|ps|c:61/1']);
+      }
+    });
+
+    it('records nothing for a train brought back across a restart until its next run', () => {
+      const runTimes = new RunTimes();
+      const before = new TrainStore(index, undefined, null, new Set(), runTimes);
+      before.apply(movement({}), T0);
+      const after = new TrainStore(index, undefined, () => 40_000, new Set(), runTimes);
+      after.importState(JSON.parse(JSON.stringify(before.exportState(T0 + 60_000))), T0 + 60_000);
+      after.apply(arrive('86021', 22, '70011'), T0 + 22 * 60_000);
+      expect(runTimes.stats.runs).toBe(0);
+      expect(after.stats.predictions).toMatchObject({ runs: 0, elsewhere: 0 });
     });
 
     it('skips a run when a report in between went missing', () => {
@@ -456,6 +490,79 @@ describe('TrainStore', () => {
       store.apply(movement({ planned_timestamp: String(T0) }), T0);
       store.apply(arrive('86021', 20, '70011'), T0 + 20 * 60_000);
       expect(Object.keys(runTimes.exportState(T0).sections)).toEqual(['87701>86021|ss|t:EMU/387']);
+    });
+  });
+
+  describe('timing runs from what trains have taken', () => {
+    // Kings Cross to Stevenage, by an LNER class 1 train with no schedule yet: 16 minutes, five times.
+    const learn = (minutes = 16, times = 5) => {
+      const runTimes = new RunTimes();
+      for (let i = 0; i < times; i++) runTimes.add({ from: '87701', to: '86021', profile: 'c:61/1', startsStopped: true, endsStopped: true }, minutes * 60_000, T0 - 60_000);
+      return runTimes;
+    };
+    const arriveStevenage = (min: number) => movement({ event_type: 'ARRIVAL', planned_event_type: 'ARRIVAL', loc_stanox: '86021', actual_timestamp: String(T0 + min * 60_000), next_report_stanox: '70011' });
+
+    it('keeps to the timetable until enough runs are known', () => {
+      const store = new TrainStore(index, undefined, null, new Set(), learn(16, 4));
+      store.apply(movement({}), T0);
+      expect(store.snapshot()[0].runMs).toBe(20 * 60_000);
+    });
+
+    it('then runs halfway between the timetable and the usual time', () => {
+      const store = new TrainStore(index, undefined, null, new Set(), learn());
+      store.apply(movement({}), T0);
+      expect(store.snapshot()[0].runMs).toBe(18 * 60_000);
+    });
+
+    it('scores each way of timing the run when the train gets there', () => {
+      const store = new TrainStore(index, undefined, () => 20_000, new Set(), learn());
+      store.apply(movement({}), T0);
+      store.apply(arriveStevenage(17), T0 + 17 * 60_000);
+      // Drawn to take 18 minutes, the timetable said 20, trains usually take 16: it took 17.
+      const p = store.stats.predictions;
+      expect(p).toMatchObject({ windowMin: 60, runs: 1, elsewhere: 0 });
+      expect(p.shown?.minutesOff.p50).toBe(1);
+      // 20 km in 17 minutes, a minute out.
+      expect(p.shown?.kmOff?.p50).toBe(1.18);
+      expect(p.shown?.longKmOff?.p50).toBe(1.18);
+      expect(p.compared?.runs).toBe(1);
+      expect(p.compared?.timetable?.minutesOff.p50).toBe(3);
+      expect(p.compared?.learned?.minutesOff.p50).toBe(1);
+      // Its departure from Stevenage is not another run's end.
+      store.apply(movement({ loc_stanox: '86021', actual_timestamp: String(T0 + 18 * 60_000), next_report_stanox: '70011' }), T0 + 18 * 60_000);
+      expect(store.stats.predictions.runs).toBe(1);
+    });
+
+    it('scores a run with only the timetable to go on without comparing it', () => {
+      const store = new TrainStore(index, undefined, () => 20_000);
+      store.apply(movement({}), T0);
+      store.apply(arriveStevenage(21), T0 + 21 * 60_000);
+      const p = store.stats.predictions;
+      expect(p.runs).toBe(1);
+      expect(p.shown?.minutesOff.p50).toBe(1);
+      expect(p).not.toHaveProperty('compared');
+    });
+
+    it('does not count a run twice when the train is drawn running on past its end', () => {
+      const store = new TrainStore(index);
+      store.setTimetable({
+        byUid: () => undefined,
+        match: () => ({ uid: 'C10001', date: '2026-10-31', atoc: 'GR', origin: 'London Kings Cross', destination: 'Peterborough' }),
+        plannedStops: () => [{ key: '87701', call: true, dep: T0 }, { key: '86021', call: false, dep: T0 + 20 * 60_000 }],
+      });
+      store.apply(movement({ planned_timestamp: String(T0) }), T0);
+      // Runs through Stevenage toward a junction we can't place: still drawn on the way to Stevenage.
+      store.apply(movement({ event_type: 'ARRIVAL', planned_event_type: 'ARRIVAL', loc_stanox: '86021', actual_timestamp: String(T0 + 20 * 60_000), planned_timestamp: String(T0 + 20 * 60_000), next_report_stanox: '86099', next_report_run_time: '2' }), T0 + 20 * 60_000);
+      expect(store.snapshot()[0]).toMatchObject({ state: 'moving', to: { key: '86021' } });
+      store.apply(movement({ event_type: 'ARRIVAL', planned_event_type: 'ARRIVAL', loc_stanox: '86099', actual_timestamp: String(T0 + 22 * 60_000), next_report_stanox: '70011', next_report_run_time: '20' }), T0 + 22 * 60_000);
+      expect(store.stats.predictions).toMatchObject({ runs: 1, elsewhere: 0 });
+    });
+
+    it('counts a train next heard of somewhere else than it was drawn running to', () => {
+      const store = new TrainStore(index);
+      store.apply(movement({}), T0);
+      store.apply(movement({ event_type: 'ARRIVAL', planned_event_type: 'ARRIVAL', loc_stanox: '70011', actual_timestamp: String(T0 + 45 * 60_000), next_report_stanox: '' }), T0 + 45 * 60_000);
+      expect(store.stats.predictions).toMatchObject({ runs: 0, elsewhere: 1 });
     });
   });
 

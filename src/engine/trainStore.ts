@@ -2,13 +2,16 @@
 //
 // TRUST only reports a train when it passes a timing point, so positions are
 // estimated: after a departure the train runs from that point toward
-// `next_report_stanox`, taking `next_report_run_time` minutes. The browser
-// interpolates along that segment; the server only sends segment changes.
+// `next_report_stanox`, taking `next_report_run_time` minutes, or, once
+// enough trains of its kind have run that section, halfway between that and
+// what they usually take. The browser interpolates along that segment; the
+// server only sends segment changes.
 
 import type { PlannedStop } from '../feeds/feed.ts';
 import type { ScheduleInfo, ScheduleLookup } from '../schedule/timetable.ts';
 import type { LocationIndex, Place } from './locations.ts';
 import { type Motion, railRates } from './motion.ts';
+import { PredictionErrors, type PredictionSummary, type ScoredRun } from './predictionErrors.ts';
 import type { Leg, RunTimes } from './runTimes.ts';
 import {
   MSG_ACTIVATION,
@@ -106,6 +109,13 @@ interface TrainRecord {
   measured?: { kmh: number; section: string };
   /** Where its latest report said it reports next, so a run between consecutive reporting points can be timed. */
   nextKey?: string;
+  /**
+   * How the current run was planned from its report at `from` (ms since
+   * epoch): the section and stop pattern it was planned as, which its run is
+   * then recorded under, and the timetable's and the learned time, so each
+   * can be scored when the train gets there.
+   */
+  timing?: { leg: Leg; from: number; timetableMs: number; learnedMs?: number };
   /** From the activation message: which schedule, starting which day. */
   uid?: string;
   runDate?: string;
@@ -184,6 +194,7 @@ export class TrainStore {
   #changed = new Set<string>();
   #removed = new Set<string>();
   #stats: StoreStats = { messages: 0, byType: {}, unplacedReports: 0, lastMessageAt: null };
+  #predictions = new PredictionErrors();
 
   constructor(
     locations: LocationIndex,
@@ -262,10 +273,16 @@ export class TrainStore {
     return out;
   }
 
-  get stats(): StoreStats & { tracked: number; onMap: number; runTimes?: { sections: number; runs: number } } {
+  get stats(): StoreStats & { tracked: number; onMap: number; runTimes?: { sections: number; runs: number }; predictions: PredictionSummary } {
     let onMap = 0;
     for (const rec of this.#trains.values()) if (rec.view) onMap++;
-    return { ...this.#stats, tracked: this.#trains.size, onMap, ...(this.#runTimes && { runTimes: this.#runTimes.stats }) };
+    return {
+      ...this.#stats,
+      tracked: this.#trains.size,
+      onMap,
+      ...(this.#runTimes && { runTimes: this.#runTimes.stats }),
+      predictions: this.#predictions.summary(this.#stats.lastMessageAt ?? 0),
+    };
   }
 
   /** Live mode: schedules give trains their origin, destination and operator. Swapped daily. */
@@ -308,6 +325,9 @@ export class TrainStore {
       // since given a position) moves to its last report.
       const last = this.#locations.get(rec.history.at(-1)?.key);
       if (rec.view && rec.view.state !== 'moving' && last && last.key !== rec.view.from.key) rec.view = { ...rec.view, from: last };
+      // Its run may have ended while nobody was listening, so it is neither
+      // recorded nor scored (see #score).
+      rec.timing = undefined;
       this.#trains.set(rec.id, rec);
       if (rec.view) this.#changed.add(rec.id);
       n++;
@@ -342,6 +362,8 @@ export class TrainStore {
 
     const at = trustTime(body.actual_timestamp, receivedAt);
     const delayMin = delayOf(body);
+    // The first report from somewhere new ends the run the train was drawn on.
+    if (rec.view?.state === 'moving' && body.loc_stanox && rec.history.at(-1)?.key !== body.loc_stanox) this.#score(rec, rec.view, body.loc_stanox, at);
     this.#record(rec, body, at, delayMin);
     rec.nextKey = body.next_report_stanox || undefined;
     this.#findSchedule(rec, body, receivedAt);
@@ -385,6 +407,7 @@ export class TrainStore {
     const running = body.event_type === 'DEPARTURE' || !placed || passing;
 
     if (body.train_terminated === 'true' || body.planned_event_type === 'DESTINATION') {
+      rec.timing = undefined;
       rec.view = { ...base, state: 'terminated', to: null, runMs: 0, speedKmh: 0 };
     } else if (running && next && next.key !== here.key && runMin > 0) {
       // From an unplaced junction the train is drawn from the last place we
@@ -399,18 +422,30 @@ export class TrainStore {
       // A late train can make up the time the timetable pads into the run
       // (but runs no faster than its plan without the padding).
       const recoverMs = delayMin > 0 ? Math.min(section.allowanceMs, delayMin * 60_000, runMin * 30_000) : 0;
-      const runMs = at + runMin * 60_000 - recoverMs - departedAt;
+      const timetableMs = runMin * 60_000 - recoverMs;
+      // TRUST reports many passes as departures: the timetable says which they are.
+      const passesHere = placed ? this.#passesAt(rec, here.key, plannedTime(body, receivedAt)) : undefined;
       const motion: Motion = {
         startsStopped: placed
-          ? body.event_type === 'DEPARTURE' && body.planned_event_type !== 'PASS' && !passing
+          ? passesHere !== undefined ? !passesHere : body.event_type === 'DEPARTURE' && body.planned_event_type !== 'PASS' && !passing
           : rec.view?.state === 'moving' ? rec.view.motion?.startsStopped ?? false : rec.view?.state === 'stopped',
         // Without a timetable, as for reports: a junction or signal is passed, a station is a stop.
         endsStopped: section.endsStopped ?? !next.timingPoint,
         ...railRates(headcode, rec.schedule),
       };
+      // What trains of its kind, run like this, have taken from here on. The
+      // run is recorded under this same leg when it ends (TRUST's own planned
+      // event types never say a train passes a place, so they can't key it).
+      const leg: Leg = { from: body.loc_stanox, to: next.key, profile: profileOf(rec), startsStopped: motion.startsStopped, endsStopped: motion.endsStopped };
+      const learnedMs = this.#runTimes?.estimate(leg)?.ms;
+      // Halfway between the two: on a sample of runs, closer than either alone
+      // (the status keeps scoring all three, so this can be checked).
+      const runMs = at + (learnedMs === undefined ? timetableMs : (timetableMs + learnedMs) / 2) - departedAt;
+      rec.timing = { leg, from: at, timetableMs, ...(learnedMs !== undefined && { learnedMs }) };
       rec.view = { ...base, departedAt, state: 'moving', to: next, runMs, motion, speedKmh: capped(this.#speedKmh(here.key, next.key, runMs), base.topKmh) };
     } else if (placed && !passing) {
       const toward = next && next.key !== here.key ? next.key : undefined;
+      rec.timing = undefined;
       rec.view = { ...base, state: 'stopped', to: null, runMs: 0, speedKmh: 0, toward };
     } else {
       rec.view = { ...rec.view!, ...scheduled, delayMin, reportedAt: at, measuredKmh: base.measuredKmh, measuredSection: base.measuredSection, topKmh: base.topKmh };
@@ -510,12 +545,29 @@ export class TrainStore {
     this.#measure(rec, key, at);
   }
 
+  /** How far off the run the train was drawn on was, now it reports at `key`. */
+  #score(rec: TrainRecord, was: TrainView, key: string, at: number): void {
+    const t = rec.timing;
+    // Only a run planned since the server started, not one brought back
+    // across a restart (it may have ended while nobody was listening).
+    if (!t || t.leg.to !== was.to?.key || key === was.from.key) return;
+    if (key !== t.leg.to) {
+      // Unless it already got there (and was drawn running on).
+      if (rec.history.at(-1)?.key !== t.leg.to) this.#predictions.elsewhere(at);
+      return;
+    }
+    const offMs: ScoredRun['offMs'] = { shown: at - (was.departedAt + was.runMs), timetable: at - (t.from + t.timetableMs) };
+    if (t.learnedMs !== undefined) offMs.learned = at - (t.from + t.learnedMs);
+    const lengthM = this.#distance?.(was.from.key, key) ?? undefined;
+    this.#predictions.add({ at, ranMs: at - was.departedAt, offMs, ...(lengthM && { lengthM }) });
+  }
+
   /** How long the run from one reporting point to the next took, for that section's usual time. */
   #recordRun(rec: TrainRecord, prev: HistoryEntry, here: HistoryEntry, at: number): void {
-    const left = prev.dep ?? prev.arr;
-    if (!this.#runTimes || left === undefined) return;
-    const leg: Leg = { from: prev.key, to: here.key, profile: profileOf(rec), startsStopped: !prev.pass, endsStopped: !here.pass };
-    this.#runTimes.add(leg, at - left, at);
+    const t = rec.timing;
+    // Under the leg it was planned as, so the next train planned so finds it.
+    if (!this.#runTimes || !t || t.leg.from !== prev.key || t.leg.to !== here.key) return;
+    this.#runTimes.add(t.leg, at - t.from, at);
   }
 
   /** Track distance over expected running time, km/h; nothing if that is faster than any GB train. */

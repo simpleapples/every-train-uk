@@ -32,8 +32,13 @@ export interface RunTimeEstimate {
   highMs: number;
 }
 
+// Version 1 keyed every run as stop to stop: it took the stop pattern from
+// TRUST's planned event types, which never say a train passes. Its runs mix
+// trains that stopped with trains that ran through, so they are not loaded.
+const VERSION = 2;
+
 export interface RunTimesState {
-  version: 1;
+  version: typeof VERSION;
   savedAt: number;
   /** Section key -> [last run at (ms since epoch), then run times in seconds, oldest first]. */
   sections: Record<string, number[]>;
@@ -102,12 +107,12 @@ export class RunTimes {
       else sections[key] = [s.lastAt, ...s.runs];
     }
     this.#dirty = false;
-    return { version: 1, savedAt: now, sections };
+    return { version: VERSION, savedAt: now, sections };
   }
 
   /** Brings back what exportState saved. Returns how many sections. */
   importState(state: RunTimesState): number {
-    if (state?.version !== 1 || !state.sections || typeof state.sections !== 'object') return 0;
+    if (state?.version !== VERSION || !state.sections || typeof state.sections !== 'object') return 0;
     let n = 0;
     for (const [key, value] of Object.entries(state.sections)) {
       if (!Array.isArray(value) || value.length < 2 || !value.every(Number.isFinite)) continue;
