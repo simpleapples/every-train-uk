@@ -91,6 +91,7 @@ cp .env.example .env    # 填入 NROD_USERNAME 和 NROD_PASSWORD
 docker compose up -d --build
 ```
 
+- 也可以直接用发布好的镜像：每次推送到 `main` 都会构建 amd64 和 arm64 版本，发布为 Docker Hub 上的 `simpleapples/every-train:latest`（另有短提交号标签）。
 - 固定用实时数据，不管 `.env` 里的 `FEED` 是什么。
 - 换端口：`HOST_PORT=8080 docker compose up -d`。
 - 时刻表、CORPUS 和地图上的列车存在 `state` volume 里，重启和升级后接着用。

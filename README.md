@@ -91,6 +91,7 @@ cp .env.example .env    # add NROD_USERNAME and NROD_PASSWORD
 docker compose up -d --build
 ```
 
+- Or run the published image, built for amd64 and arm64 from every push to `main`: `simpleapples/every-train:latest` on Docker Hub (also tagged with the short commit).
 - Always runs live data, whatever `FEED` says in `.env`.
 - Change the port with `HOST_PORT=8080 docker compose up -d`.
 - The timetable, CORPUS and the trains on the map live in the `state` volume, so restarts and upgrades pick up where they left off.
